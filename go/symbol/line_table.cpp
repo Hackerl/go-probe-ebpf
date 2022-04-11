@@ -185,3 +185,15 @@ bool CLineTable::step(const unsigned char **p, uintptr_t *pc, int *value, bool f
 
     return true;
 }
+
+bool CLineTable::findFunc(const std::string &name, CFunc &func) {
+    for (unsigned int i = 0; i < mFuncNum; i++) {
+        if (!getFunc(i, func))
+            break;
+
+        if (name == func.getName())
+            return true;
+    }
+
+    return false;
+}

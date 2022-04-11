@@ -68,6 +68,9 @@ bool CBuildInfo::load(const std::string &file) {
                 reader.segments.begin(),
                 reader.segments.end(),
                 [=](const auto& s) {
+                    if (s->get_type() != PT_LOAD)
+                        return false;
+
                     return address >= s->get_virtual_address() && address <= s->get_virtual_address() + s->get_file_size() - 1;
                 });
 

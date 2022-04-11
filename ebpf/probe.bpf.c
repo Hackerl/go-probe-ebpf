@@ -6,6 +6,13 @@
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
 struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 8192);
+    __type(key, uintptr_t);
+    __type(value, int);
+} map SEC(".maps");
+
+struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 256 * 1024);
 } rb SEC(".maps");
@@ -51,6 +58,24 @@ static char *next(struct event *e) {
     return p;
 }
 
+static int traceback(struct event *e, uintptr_t sp) {
+    int frame_size = 0;
+
+    for (int i = 0; i < TRACE_COUNT; i++) {
+        if (bpf_probe_read_user(&e->stack_trace[i], sizeof(uintptr_t), (void *) (sp + frame_size)) < 0)
+            return -1;
+
+        int *v = bpf_map_lookup_elem(&map, &e->stack_trace[i]);
+
+        if (!v)
+            break;
+
+        frame_size += *v + (int)sizeof(uintptr_t);
+    }
+
+    return 0;
+}
+
 bool register_based = false;
 
 SEC("uprobe/cmd_start")
@@ -83,6 +108,13 @@ int cmd_start(struct pt_regs *ctx) {
     e->method_id = 0;
 
     if (bpf_probe_read_user(next(e), MAX_LENGTH(c.path.length, ARG_LENGTH), c.path.data) < 0) {
+        bpf_ringbuf_discard(e, 0);
+        return 0;
+    }
+
+    __builtin_memset(e->stack_trace, 0, sizeof(e->stack_trace));
+
+    if (traceback(e, PT_REGS_RET(ctx)) < 0) {
         bpf_ringbuf_discard(e, 0);
         return 0;
     }

@@ -13,13 +13,13 @@ enum emGolangVersion {
 };
 
 class CLineTable {
-#define gLineTable zero::Singleton<CLineTable>::getInstance()
 public:
     bool load(const std::string& file);
 
 public:
     bool getFunc(unsigned int index, CFunc &func);
     bool findFunc(uintptr_t address, CFunc &func);
+    bool findFunc(const std::string &name, CFunc &func);
 
 public:
     int getPCValue(unsigned int offset, uintptr_t entry, uintptr_t targetPC) const;

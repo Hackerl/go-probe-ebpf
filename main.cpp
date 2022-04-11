@@ -2,7 +2,7 @@
 #include "ebpf/probe.skel.h"
 #include "go/symbol/line_table.h"
 #include "go/symbol/build_info.h"
-#include <bpf/libbpf.h>
+#include <bpf/bpf.h>
 #include <zero/log.h>
 #include <zero/cmdline.h>
 #include <sys/user.h>
@@ -37,12 +37,55 @@ int onLog(libbpf_print_level level, const char *format, va_list args) {
 
 int onEvent(void *ctx, void *data, size_t size) {
     auto e = (event *) data;
+    auto context = (std::tuple<int, CLineTable *> *) ctx;
+
+    int fd = std::get<0>(*context);
+    CLineTable *lineTable = std::get<1>(*context);
 
     LOG_INFO("pid: %d class: %d method: %d", e->pid, e->class_id, e->method_id);
 
-    for (int i = 0; i < e->count; i++) {
-        LOG_INFO("argument %d: %s", i, std::string(e->args[i], ARG_LENGTH).c_str());
+    std::list<std::string> args;
+    std::list<std::string> stackTrace;
+
+    for (int i = 0; i < e->count; i++)
+        args.emplace_back(e->args[i], ARG_LENGTH);
+
+    for (int i = 0; i < TRACE_COUNT; i++) {
+        CFunc func = {};
+
+        if (!lineTable->findFunc(e->stack_trace[i], func))
+            break;
+
+        char stack[4096] = {};
+
+        snprintf(stack, sizeof(stack),
+                 "%s %s:%d +0x%lx",
+                 func.getName(),
+                 func.getSourceFile(e->stack_trace[i]),
+                 func.getSourceLine(e->stack_trace[i]),
+                 e->stack_trace[i] - func.getEntry()
+        );
+
+        stackTrace.emplace_back(stack);
+
+        if (i != TRACE_COUNT - 1 && e->stack_trace[i + 1] == 0) {
+            if (func.isStackTop())
+                break;
+
+            uintptr_t pc = e->stack_trace[i];
+            int frame_size = func.getFrameSize(pc);
+
+            bpf_map_update_elem(fd, &pc, &frame_size, BPF_NOEXIST);
+
+            break;
+        }
     }
+
+    LOG_INFO(
+            "args: %s stack trace: %s",
+            zero::strings::join(args, " ").c_str(),
+            zero::strings::join(stackTrace, " ").c_str()
+    );
 
     return 0;
 }
@@ -75,24 +118,8 @@ bool getBaseAddress(const std::string &path, uintptr_t &address) {
     return true;
 }
 
-bool getFuncAddress(const std::string &symbol, uintptr_t &address) {
-    for (unsigned int i = 0; i < gLineTable->mFuncNum; i++) {
-        CFunc func = {};
-
-        if (!gLineTable->getFunc(i, func))
-            break;
-
-        if (symbol == func.getName()) {
-            address = (uintptr_t) func.getEntry();
-            return true;
-        }
-    }
-
-    return false;
-}
-
 int main(int argc, char **argv) {
-    INIT_CONSOLE_LOG(zero::DEBUG);
+    INIT_CONSOLE_LOG(zero::INFO);
 
     zero::CCmdline cmdline;
 
@@ -102,12 +129,14 @@ int main(int argc, char **argv) {
     int pid = cmdline.get<int>("pid");
     std::string path = zero::filesystem::path::join("/proc", std::to_string(pid), "exe");
 
-    if (!gLineTable->load(std::string(path))) {
+    CLineTable lineTable = {};
+
+    if (!lineTable.load(std::string(path))) {
         LOG_ERROR("line table load failed");
         return -1;
     }
 
-    CBuildInfo buildInfo;
+    CBuildInfo buildInfo = {};
 
     if (buildInfo.load(path)) {
         LOG_INFO("go version: %s", buildInfo.mVersion.c_str());
@@ -120,14 +149,14 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    uintptr_t entry;
+    CFunc func = {};
 
-    if (!getFuncAddress("os/exec.(*Cmd).Start", entry)) {
+    if (!lineTable.findFunc("os/exec.(*Cmd).Start", func)) {
         LOG_ERROR("failed to get function address");
         return -1;
     }
 
-    LOG_INFO("base: 0x%lx 0x%lx", base, entry);
+    LOG_INFO("base: 0x%lx entry: 0x%lx", base, func.getEntry());
 
     libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
     libbpf_set_print(onLog);
@@ -145,7 +174,7 @@ int main(int argc, char **argv) {
             false,
             pid,
             path.c_str(),
-            entry - base
+            func.getEntry() - base
     );
 
     if (!skeleton->links.cmd_start) {
@@ -154,7 +183,12 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.rb), onEvent, nullptr, nullptr);
+    std::tuple<int, CLineTable *> context = {
+            bpf_map__fd(skeleton->maps.map),
+            &lineTable
+    };
+
+    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.rb), onEvent, &context, nullptr);
 
     if (!rb) {
         LOG_ERROR("failed to create ring buffer: %s", strerror(errno));
