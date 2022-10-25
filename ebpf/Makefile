@@ -59,7 +59,7 @@ $(LIBBPF): $(wildcard $(LIBBPF_SRC)/*.[ch] $(LIBBPF_SRC)/Makefile)
 # Build bpftool
 $(BPFTOOL): | $(BPFTOOL_OUTPUT)
 	$(call msg,BPFTOOL,$@)
-	$(Q)$(MAKE) OUTPUT=$(BPFTOOL_OUTPUT) -C $(BPFTOOL_SRC) bootstrap
+	$(Q)$(MAKE) OUTPUT=$(BPFTOOL_OUTPUT)/ -C $(BPFTOOL_SRC) bootstrap
 
 # Build BPF code
 $(OUTPUT)/%.bpf.o: %.h %.bpf.c $(LIBBPF) $(VMLINUX) | $(OUTPUT)
