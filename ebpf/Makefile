@@ -5,7 +5,8 @@ LLVM_STRIP ?= llvm-strip
 LIBBPF_SRC := $(abspath libbpf/src)
 BPFTOOL_SRC := $(abspath bpftool/src)
 LIBBPF := $(abspath $(OUTPUT)/libbpf)
-BPFTOOL ?= $(abspath $(OUTPUT)/bpftool/bpftool)
+BPFTOOL_OUTPUT ?= $(abspath $(OUTPUT)/bpftool)
+BPFTOOL ?= $(BPFTOOL_OUTPUT)/bootstrap/bpftool
 ARCH := $(shell uname -m | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/' | sed 's/ppc64le/powerpc/' | sed 's/mips.*/mips/')
 VMLINUX := vmlinux/$(ARCH)/vmlinux.h
 # Use our own libbpf API headers and Linux UAPI headers distributed with
@@ -46,7 +47,7 @@ clean:
 	$(call msg,CLEAN)
 	$(Q)rm -rf $(OUTPUT) $(MODULE).skel.h
 
-$(OUTPUT) $(dir $(BPFTOOL)):
+$(OUTPUT) $(BPFTOOL_OUTPUT):
 	$(call msg,MKDIR,$@)
 	$(Q)mkdir -p $@
 
@@ -56,9 +57,9 @@ $(LIBBPF): $(wildcard $(LIBBPF_SRC)/*.[ch] $(LIBBPF_SRC)/Makefile)
 	$(Q)$(MAKE) -C $(LIBBPF_SRC) BUILD_STATIC_ONLY=1 PREFIX=$@ install
 
 # Build bpftool
-$(BPFTOOL): | $(dir $(BPFTOOL))
+$(BPFTOOL): | $(BPFTOOL_OUTPUT)
 	$(call msg,BPFTOOL,$@)
-	$(Q)$(MAKE) OUTPUT=$(dir $(BPFTOOL)) -C $(BPFTOOL_SRC)
+	$(Q)$(MAKE) OUTPUT=$(BPFTOOL_OUTPUT) -C $(BPFTOOL_SRC) bootstrap
 
 # Build BPF code
 $(OUTPUT)/%.bpf.o: %.h %.bpf.c $(LIBBPF) $(VMLINUX) | $(OUTPUT)
