@@ -20,7 +20,7 @@ include(FetchContent)
 FetchContent_Declare(
         go-symbol
         GIT_REPOSITORY https://github.com/Hackerl/go-symbol
-        GIT_TAG a4d933cfc41bf2fbd6bff31fc84f391c5ec4e5ff
+        GIT_TAG 92a5e41720266a0eeabda803569ddfdc1333d0e2
 )
 
 FetchContent_MakeAvailable(go-symbol)

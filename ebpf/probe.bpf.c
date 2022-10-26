@@ -59,13 +59,16 @@ static char *next(struct event *e) {
 }
 
 static int traceback(struct event *e, uintptr_t sp) {
+    uintptr_t pc;
     int frame_size = 0;
 
     for (int i = 0; i < TRACE_COUNT; i++) {
-        if (bpf_probe_read_user(&e->stack_trace[i], sizeof(uintptr_t), (void *) (sp + frame_size)) < 0)
+        if (bpf_probe_read_user(&pc, sizeof(uintptr_t), (void *) (sp + frame_size)) < 0)
             return -1;
 
-        int *v = bpf_map_lookup_elem(&map, &e->stack_trace[i]);
+        e->stack_trace[i] = pc;
+
+        int *v = bpf_map_lookup_elem(&map, &pc);
 
         if (!v)
             break;
