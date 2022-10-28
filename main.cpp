@@ -1,10 +1,10 @@
-#include "ebpf/probe.h"
-#include "ebpf/probe.skel.h"
 #include <bpf/bpf.h>
 #include <zero/log.h>
 #include <zero/cmdline.h>
 #include <zero/os/process.h>
 #include <go/symbol/reader.h>
+#include "ebpf/probe.h"
+#include "ebpf/probe.skel.h"
 
 int onLog(libbpf_print_level level, const char *format, va_list args) {
     va_list copy;
@@ -34,20 +34,24 @@ int onLog(libbpf_print_level level, const char *format, va_list args) {
     return length;
 }
 
+#ifdef USE_RING_BUFFER
 int onEvent(void *ctx, void *data, size_t size) {
-    auto e = (event *) data;
-    auto &[fd, symbolTable] = *(std::pair<int, go::symbol::SymbolTable &> *) ctx;
+#else
+void onEvent(void *ctx, int cpu, void *data, __u32 size) {
+#endif
+    auto event = (go_probe_event *) data;
+    auto &[map, symbolTable] = *(std::pair<bpf_map *, go::symbol::SymbolTable &> *) ctx;
 
-    LOG_INFO("pid: %d class: %d method: %d", e->pid, e->class_id, e->method_id);
+    LOG_INFO("pid: %d class: %d method: %d", event->pid, event->class_id, event->method_id);
 
     std::list<std::string> args;
     std::list<std::string> stackTrace;
 
-    for (int i = 0; i < e->count; i++)
-        args.emplace_back(e->args[i], ARG_LENGTH);
+    for (int i = 0; i < event->count; i++)
+        args.emplace_back(event->args[i], ARG_LENGTH);
 
     for (int i = 0; i < TRACE_COUNT; i++) {
-        auto it = symbolTable.find(e->stack_trace[i]);
+        auto it = symbolTable.find(event->stack_trace[i]);
 
         if (it == symbolTable.end())
             break;
@@ -58,21 +62,21 @@ int onEvent(void *ctx, void *data, size_t size) {
         snprintf(stack, sizeof(stack),
                  "%s %s:%d +0x%lx",
                  symbol.name(),
-                 symbol.sourceFile(e->stack_trace[i]),
-                 symbol.sourceLine(e->stack_trace[i]),
-                 e->stack_trace[i] - symbol.entry()
+                 symbol.sourceFile(event->stack_trace[i]),
+                 symbol.sourceLine(event->stack_trace[i]),
+                 event->stack_trace[i] - symbol.entry()
         );
 
         stackTrace.emplace_back(stack);
 
-        if (i != TRACE_COUNT - 1 && e->stack_trace[i + 1] == 0) {
+        if (i != TRACE_COUNT - 1 && event->stack_trace[i + 1] == 0) {
             if (symbol.isStackTop())
                 break;
 
-            uintptr_t pc = e->stack_trace[i];
+            uintptr_t pc = event->stack_trace[i];
             int frame_size = symbol.frameSize(pc);
 
-            bpf_map_update_elem(fd, &pc, &frame_size, BPF_NOEXIST);
+            bpf_map__update_elem(map, &pc, sizeof(pc), &frame_size, sizeof(frame_size), BPF_NOEXIST);
 
             break;
         }
@@ -84,7 +88,9 @@ int onEvent(void *ctx, void *data, size_t size) {
             zero::strings::join(stackTrace, " ").c_str()
     );
 
+#ifdef USE_RING_BUFFER
     return 0;
+#endif
 }
 
 int main(int argc, char **argv) {
@@ -175,7 +181,19 @@ int main(int argc, char **argv) {
         return -1;
     }
 
+#ifdef BPF_NO_GLOBAL_DATA
+    uint32_t index = 0;
+    int registerBased = major > 1 || (major == 1 && minor >= 7);
+
+    if (bpf_map__update_elem(skeleton->maps.config_map, &index, sizeof(index), &registerBased, sizeof(registerBased), BPF_ANY) < 0) {
+        LOG_ERROR("update map failed");
+        probe_bpf::destroy(skeleton);
+        return -1;
+    }
+#else
     skeleton->bss->register_based = major > 1 || (major == 1 && minor >= 7);
+#endif
+
     skeleton->links.cmd_start = bpf_program__attach_uprobe(
             skeleton->progs.cmd_start,
             false,
@@ -190,12 +208,13 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    std::pair<int, go::symbol::SymbolTable &> context = {
-            bpf_map__fd(skeleton->maps.map),
+    std::pair<bpf_map *, go::symbol::SymbolTable &> context = {
+            skeleton->maps.frame_map,
             *symbolTable
     };
 
-    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.rb), onEvent, &context, nullptr);
+#ifdef USE_RING_BUFFER
+    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.events), onEvent, &context, nullptr);
 
     if (!rb) {
         LOG_ERROR("failed to create ring buffer: %s", strerror(errno));
@@ -208,6 +227,22 @@ int main(int argc, char **argv) {
     }
 
     ring_buffer__free(rb);
+#else
+    perf_buffer *pb = perf_buffer__new(bpf_map__fd(skeleton->maps.events), 64, onEvent, nullptr, &context, nullptr);
+
+    if (!pb) {
+        LOG_ERROR("failed to create perf buffer: %s", strerror(errno));
+        probe_bpf::destroy(skeleton);
+        return -1;
+    }
+
+    while (perf_buffer__poll(pb, 100) >= 0) {
+
+    }
+
+    perf_buffer__free(pb);
+#endif
+
     probe_bpf::destroy(skeleton);
 
     return 0;

@@ -3,10 +3,7 @@ project(go_probe_ebpf)
 
 set(CMAKE_CXX_STANDARD 17)
 
-include_directories(
-        ${CMAKE_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/ebpf/libbpf/include/uapi
-)
+include_directories(${CMAKE_SOURCE_DIR}/ebpf/libbpf/include/uapi)
 
 option(STATIC_BUILD "enable static build" OFF)
 
