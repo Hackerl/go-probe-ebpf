@@ -66,7 +66,7 @@ $(BPFTOOL): | $(BPFTOOL_OUTPUT)
 	$(Q)$(MAKE) OUTPUT=$(BPFTOOL_OUTPUT)/ -C $(BPFTOOL_SRC) bootstrap
 
 # Build BPF code
-$(OUTPUT)/%.bpf.o: %.h %.bpf.c $(LIBBPF) $(VMLINUX) | $(OUTPUT)
+$(OUTPUT)/%.bpf.o: $(wildcard src/*.[ch]) $(LIBBPF) $(VMLINUX) | $(OUTPUT)
 	$(call msg,BPF,$@)
 
 ifeq ($(CORE),1)

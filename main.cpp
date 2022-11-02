@@ -3,7 +3,7 @@
 #include <zero/cmdline.h>
 #include <zero/os/process.h>
 #include <go/symbol/reader.h>
-#include "ebpf/probe.h"
+#include "ebpf/src/event.h"
 #include "ebpf/probe.skel.h"
 
 int onLog(libbpf_print_level level, const char *format, va_list args) {
@@ -194,15 +194,15 @@ int main(int argc, char **argv) {
     skeleton->bss->register_based = major > 1 || (major == 1 && minor >= 7);
 #endif
 
-    skeleton->links.cmd_start = bpf_program__attach_uprobe(
-            skeleton->progs.cmd_start,
+    skeleton->links.os_exec_cmd_start = bpf_program__attach_uprobe(
+            skeleton->progs.os_exec_cmd_start,
             false,
             pid,
             path.string().c_str(),
             it.operator*().symbol().entry() - processMapping->start
     );
 
-    if (!skeleton->links.cmd_start) {
+    if (!skeleton->links.os_exec_cmd_start) {
         LOG_ERROR("failed to attach: %s", strerror(errno));
         probe_bpf::destroy(skeleton);
         return -1;
