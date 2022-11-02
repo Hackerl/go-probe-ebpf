@@ -7,8 +7,6 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#define MAX_LENGTH(length, limit) (length < limit ? (length & (limit - 1)) : limit)
-
 #define GO_PARM1_REGS ax
 #define GO_PARM2_REGS bx
 #define GO_PARM3_REGS cx
@@ -76,18 +74,6 @@ static int traceback(struct go_probe_event *event, uintptr_t sp) {
     }
 
     return 0;
-}
-
-static char *next_slot(struct go_probe_event *event) {
-    if (event->count >= ARG_COUNT)
-        return NULL;
-
-    int index = event->count++;
-    char *p = event->args[MAX_LENGTH(index, ARG_COUNT)];
-
-    __builtin_memset(p, 0, ARG_LENGTH);
-
-    return p;
 }
 
 static struct go_probe_event *new_event() {

@@ -1,10 +1,10 @@
+#include "ebpf/src/event.h"
+#include "ebpf/probe.skel.h"
 #include <bpf/bpf.h>
 #include <zero/log.h>
 #include <zero/cmdline.h>
 #include <zero/os/process.h>
 #include <go/symbol/reader.h>
-#include "ebpf/src/event.h"
-#include "ebpf/probe.skel.h"
 
 int onLog(libbpf_print_level level, const char *format, va_list args) {
     va_list copy;
@@ -48,7 +48,7 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
     std::list<std::string> stackTrace;
 
     for (int i = 0; i < event->count; i++)
-        args.emplace_back(event->args[i], ARG_LENGTH);
+        args.emplace_back(event->args[i]);
 
     for (int i = 0; i < TRACE_COUNT; i++) {
         auto it = symbolTable.find(event->stack_trace[i]);
