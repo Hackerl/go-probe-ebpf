@@ -3,6 +3,7 @@
 
 #include "type.h"
 #include "event.h"
+#include "macro.h"
 #include <bpf/bpf_helpers.h>
 
 #define SLICE_MAX_COUNT 10
@@ -11,8 +12,10 @@ static int stringify_string(string *str, char *buffer, size_t size) {
     if (!str->data || str->length <= 0)
         return 0;
 
-    size_t length = MAX_LENGTH(str->length, ARG_LENGTH);
-    length = length < size - 1 ? length : size - 1;
+    u32 length = MAX_LENGTH(str->length, ARG_LENGTH);
+    u32 remain = size - 1;
+
+    length = MIN(length, remain);
 
     if (bpf_probe_read_user(buffer, length, str->data) < 0)
         return -1;

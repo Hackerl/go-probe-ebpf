@@ -1,7 +1,11 @@
 #ifndef GO_PROBE_EBPF_TYPE_H
 #define GO_PROBE_EBPF_TYPE_H
 
+#if __KERNEL__
 #include <linux/types.h>
+#else
+#include <vmlinux.h>
+#endif
 
 typedef signed char go_int8;
 typedef unsigned char go_uint8;

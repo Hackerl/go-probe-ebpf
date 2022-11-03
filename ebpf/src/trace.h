@@ -1,31 +1,13 @@
 #ifndef GO_PROBE_EBPF_TRACE_H
 #define GO_PROBE_EBPF_TRACE_H
 
-#include "event.h"
+#if __KERNEL__
 #include <linux/bpf.h>
 #include <linux/ptrace.h>
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
+#endif
 
-#define GO_PARM1_REGS ax
-#define GO_PARM2_REGS bx
-#define GO_PARM3_REGS cx
-#define GO_PARM4_REGS di
-#define GO_PARM5_REGS si
-#define GO_PARM6_REGS r8
-#define GO_PARM7_REGS r9
-#define GO_PARM8_REGS r10
-#define GO_PARM9_REGS r11
-
-#define GO_REGS_PARM1(x) (__PT_REGS_CAST(x)->GO_PARM1_REGS)
-#define GO_REGS_PARM2(x) (__PT_REGS_CAST(x)->GO_PARM2_REGS)
-#define GO_REGS_PARM3(x) (__PT_REGS_CAST(x)->GO_PARM3_REGS)
-#define GO_REGS_PARM4(x) (__PT_REGS_CAST(x)->GO_PARM4_REGS)
-#define GO_REGS_PARM5(x) (__PT_REGS_CAST(x)->GO_PARM5_REGS)
-#define GO_REGS_PARM6(x) (__PT_REGS_CAST(x)->GO_PARM6_REGS)
-#define GO_REGS_PARM7(x) (__PT_REGS_CAST(x)->GO_PARM7_REGS)
-#define GO_REGS_PARM8(x) (__PT_REGS_CAST(x)->GO_PARM8_REGS)
-#define GO_REGS_PARM9(x) (__PT_REGS_CAST(x)->GO_PARM9_REGS)
+#include "event.h"
+#include "macro.h"
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
