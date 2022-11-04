@@ -15,7 +15,7 @@ int onLog(libbpf_print_level level, const char *format, va_list args) {
     if (length <= 0)
         return 0;
 
-    std::unique_ptr<char> buffer(new char[length + 1]);
+    std::unique_ptr<char[]> buffer = std::make_unique<char[]>(length + 1);
     vsnprintf(buffer.get(), length + 1, format, copy);
 
     switch (level) {

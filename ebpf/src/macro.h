@@ -3,16 +3,13 @@
 
 #include <bpf/bpf_tracing.h>
 
-#define MIN(a,b) (((a)<(b))?(a):(b))
-#define MAX(a,b) (((a)>(b))?(a):(b))
-
 #define MAX_LENGTH(length, limit) (length < limit ? (length & (limit - 1)) : limit)
 
-#define GO_PARM1_REGS ax
-#define GO_PARM2_REGS bx
-#define GO_PARM3_REGS cx
-#define GO_PARM4_REGS di
-#define GO_PARM5_REGS si
+#define GO_PARM1_REGS rax
+#define GO_PARM2_REGS rbx
+#define GO_PARM3_REGS rcx
+#define GO_PARM4_REGS rdi
+#define GO_PARM5_REGS rsi
 #define GO_PARM6_REGS r8
 #define GO_PARM7_REGS r9
 #define GO_PARM8_REGS r10

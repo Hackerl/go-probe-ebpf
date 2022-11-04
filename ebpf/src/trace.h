@@ -1,11 +1,8 @@
 #ifndef GO_PROBE_EBPF_TRACE_H
 #define GO_PROBE_EBPF_TRACE_H
 
-#if __KERNEL__
 #include <linux/bpf.h>
 #include <linux/ptrace.h>
-#endif
-
 #include "event.h"
 #include "macro.h"
 
@@ -24,15 +21,15 @@ struct {
 #else
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __type(key, u32);
+    __type(key, __u32);
     __type(value, struct go_probe_event);
     __uint(max_entries, 1);
 } cache SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-    __uint(key_size, sizeof(u32));
-    __uint(value_size, sizeof(u32));
+    __uint(key_size, sizeof(__u32));
+    __uint(value_size, sizeof(__u32));
 } events SEC(".maps");
 #endif
 
@@ -58,18 +55,22 @@ static int traceback(struct go_probe_event *event, uintptr_t sp) {
     return 0;
 }
 
-static struct go_probe_event *new_event() {
+static struct go_probe_event *new_event(int class_id, int method_id, int count) {
 #ifdef USE_RING_BUFFER
     struct go_probe_event *event = bpf_ringbuf_reserve(&events, sizeof(struct go_probe_event), 0);
 #else
-    u32 index = 0;
+    __u32 index = 0;
     struct go_probe_event* event = bpf_map_lookup_elem(&cache, &index);
 #endif
     if (!event)
         return NULL;
 
     event->pid = (int) (bpf_get_current_pid_tgid() >> 32);
-    event->count = 0;
+    event->class_id = class_id;
+    event->method_id = method_id;
+    event->count = count;
+
+    __builtin_memset(event->args, 0, count * ARG_LENGTH);
 
     return event;
 }

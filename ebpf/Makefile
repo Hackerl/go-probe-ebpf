@@ -12,7 +12,6 @@ KERN_RELEASE ?= $(shell uname -r)
 KERN_BUILD_PATH = /lib/modules/$(KERN_RELEASE)/build
 KERN_SRC_PATH = $(if $(wildcard /lib/modules/$(KERN_RELEASE)/source),/lib/modules/$(KERN_RELEASE)/source,$(KERN_BUILD_PATH))
 ARCH := $(shell uname -m | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/' | sed 's/ppc64le/powerpc/' | sed 's/mips.*/mips/')
-VMLINUX := vmlinux/$(ARCH)/vmlinux.h
 # Use our own libbpf API headers and Linux UAPI headers distributed with
 # libbpf to avoid dependency on system-wide headers, which could be missing or
 # outdated
@@ -66,34 +65,9 @@ $(BPFTOOL): | $(BPFTOOL_OUTPUT)
 	$(Q)$(MAKE) OUTPUT=$(BPFTOOL_OUTPUT)/ -C $(BPFTOOL_SRC) bootstrap
 
 # Build BPF code
-$(OUTPUT)/%.bpf.o: $(wildcard src/*.[ch]) $(LIBBPF) $(VMLINUX) | $(OUTPUT)
+$(OUTPUT)/%.bpf.o: $(wildcard src/*.[ch]) $(LIBBPF) | $(OUTPUT)
 	$(call msg,BPF,$@)
-
-ifeq ($(CORE),1)
-	$(Q)$(CLANG) -g -O2 -target bpf -D__TARGET_ARCH_$(ARCH) $(BPF_CFLAGS) $(INCLUDES) -I$(dir $(VMLINUX)) $(CLANG_BPF_SYS_INCLUDES) -c $(filter %.c,$^) -o $@
-else
-	$(Q)$(CLANG) -S -D__BPF_TRACING__ -D__KERNEL__ -D__TARGET_ARCH_$(ARCH) \
-		$(BPF_CFLAGS) $(INCLUDES) \
-		-include $(KERN_SRC_PATH)/include/linux/kconfig.h \
-		-I$(KERN_SRC_PATH)/arch/$(ARCH)/include \
-		-I$(KERN_SRC_PATH)/arch/$(ARCH)/include/uapi \
-		-I$(KERN_BUILD_PATH)/arch/$(ARCH)/include/generated \
-		-I$(KERN_BUILD_PATH)/arch/$(ARCH)/include/generated/uapi \
-		-I$(KERN_SRC_PATH)/include \
-		-I$(KERN_BUILD_PATH)/include \
-		-I$(KERN_SRC_PATH)/include/uapi \
-		-I$(KERN_BUILD_PATH)/include/generated \
-		-I$(KERN_BUILD_PATH)/include/generated/uapi \
-		$(CLANG_BPF_SYS_INCLUDES) \
-		-Wunused -Wall -Wno-frame-address -Wno-unused-value -Wno-unknown-warning-option \
-		-Wno-pragma-once-outside-header -Wno-pointer-sign -Wno-gnu-variable-sized-type-not-at-end \
-		-Wno-deprecated-declarations -Wno-compare-distinct-pointer-types -Wno-address-of-packed-member \
-		-fno-stack-protector -fno-jump-tables -fno-unwind-tables -fno-asynchronous-unwind-tables \
-		-xc -nostdinc -O2 -emit-llvm -c -g \
-		-c $(filter %.c,$^) -o - | \
-		$(LLC) -march=bpf -filetype=obj -o $@
-endif
-
+	$(Q)$(CLANG) -g -O2 -target bpf -D__TARGET_ARCH_$(ARCH) $(BPF_CFLAGS) $(INCLUDES) $(CLANG_BPF_SYS_INCLUDES) -c $(filter %.c,$^) -o $@
 	$(Q)$(LLVM_STRIP) -g $@ # strip useless DWARF info
 
 # Generate BPF skeletons

@@ -8,20 +8,20 @@
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 1);
-    __type(key, u32);
+    __type(key, __u32);
     __type(value, int);
 } config_map SEC(".maps");
 #else
-bool register_based = false;
+int register_based = 0;
 #endif
 
-static bool is_register_based() {
+static int is_register_based() {
 #ifdef BPF_NO_GLOBAL_DATA
-    u32 index = 0;
+    __u32 index = 0;
     int *config = bpf_map_lookup_elem(&config_map, &index);
 
     if (!config)
-        return false;
+        return 0;
 
     return *config;
 #else

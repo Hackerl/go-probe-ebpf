@@ -1,13 +1,7 @@
 #ifndef GO_PROBE_EBPF_EVENT_H
 #define GO_PROBE_EBPF_EVENT_H
 
-#if __KERNEL__
-#include <linux/types.h>
-#elif __cplusplus
-#include <cstdint>
-#else
-#include <vmlinux.h>
-#endif
+#include <stdint.h>
 
 #define ARG_COUNT 16
 #define ARG_LENGTH 256

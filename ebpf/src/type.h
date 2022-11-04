@@ -1,11 +1,7 @@
 #ifndef GO_PROBE_EBPF_TYPE_H
 #define GO_PROBE_EBPF_TYPE_H
 
-#if __KERNEL__
-#include <linux/types.h>
-#else
-#include <vmlinux.h>
-#endif
+#include <stddef.h>
 
 typedef signed char go_int8;
 typedef unsigned char go_uint8;
@@ -36,7 +32,7 @@ typedef struct {
 
 typedef struct {
     const char *data;
-    ptrdiff_t length;
+    size_t length;
 } string;
 
 typedef struct {

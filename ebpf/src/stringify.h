@@ -5,6 +5,7 @@
 #include "event.h"
 #include "macro.h"
 #include <bpf/bpf_helpers.h>
+#include <sys/param.h>
 
 #define SLICE_MAX_COUNT 10
 
@@ -12,10 +13,10 @@ static int stringify_string(string *str, char *buffer, size_t size) {
     if (!str->data || str->length <= 0)
         return 0;
 
-    u32 length = MAX_LENGTH(str->length, ARG_LENGTH);
-    u32 remain = size - 1;
+    __u32 remain = size - 1;
+    __u32 length = MIN(str->length, remain);
 
-    length = MIN(length, remain);
+    length = MAX_LENGTH(length, ARG_LENGTH);
 
     if (bpf_probe_read_user(buffer, length, str->data) < 0)
         return -1;
@@ -48,6 +49,30 @@ static int stringify_string_slice(slice *s, char *buffer, size_t size) {
 
         if (n < 0)
             break;
+
+        length += n;
+    }
+
+    return (int) length;
+}
+
+static int stringify_os_exec_cmd(os_exec_cmd *cmd, char *buffer, size_t size) {
+    size_t length = 0;
+
+    {
+        int n = stringify_string(&cmd->path, buffer, size);
+
+        if (n < 0)
+            return -1;
+
+        length += n;
+    }
+
+    {
+        int n = stringify_string_slice(&cmd->args, buffer + length, size - length);
+
+        if (n < 0)
+            return -1;
 
         length += n;
     }
