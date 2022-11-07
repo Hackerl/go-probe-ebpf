@@ -25,10 +25,20 @@ int os_exec_cmd_start(struct pt_regs *ctx) {
     if (!event)
         return 0;
 
-    if (stringify_os_exec_cmd(&cmd, event->args[0], ARG_LENGTH) < 0) {
-        free_event(event);
+    int n = stringify_string(&cmd.path, event->args[0], ARG_LENGTH);
+
+    if (n < 0)
+        return -1;
+
+    if (n == ARG_LENGTH - 1) {
+        submit_event(ctx, event);
         return 0;
     }
+
+    event->args[0][BOUND(n , ARG_LENGTH)] = ' ';
+
+    if (n < stringify_string_slice(&cmd.args, event->args[0] + BOUND(n + 1, ARG_LENGTH), ARG_LENGTH - BOUND(n + 1, ARG_LENGTH)))
+        return -1;
 
     submit_event(ctx, event);
 

@@ -3,7 +3,7 @@
 
 #include <bpf/bpf_tracing.h>
 
-#define MAX_LENGTH(length, limit) (length < limit ? (length & (limit - 1)) : limit)
+#define BOUND(length, limit) (length & (limit - 1))
 
 #define GO_PARM1_REGS rax
 #define GO_PARM2_REGS rbx

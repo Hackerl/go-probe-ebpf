@@ -33,7 +33,7 @@ struct {
 } events SEC(".maps");
 #endif
 
-static int traceback(struct go_probe_event *event, uintptr_t sp) {
+static __always_inline int traceback(struct go_probe_event *event, uintptr_t sp) {
     uintptr_t pc;
     int frame_size = 0;
 
@@ -46,8 +46,13 @@ static int traceback(struct go_probe_event *event, uintptr_t sp) {
 
         int *v = bpf_map_lookup_elem(&frame_map, &pc);
 
-        if (!v)
+        if (!v) {
+            if (i == TRACE_COUNT - 1)
+                break;
+
+            event->stack_trace[i + 1] = 0;
             break;
+        }
 
         frame_size += *v + (int) sizeof(uintptr_t);
     }
@@ -55,7 +60,7 @@ static int traceback(struct go_probe_event *event, uintptr_t sp) {
     return 0;
 }
 
-static struct go_probe_event *new_event(int class_id, int method_id, int count) {
+static __always_inline struct go_probe_event *new_event(int class_id, int method_id, int count) {
 #ifdef USE_RING_BUFFER
     struct go_probe_event *event = bpf_ringbuf_reserve(&events, sizeof(struct go_probe_event), 0);
 #else
@@ -70,20 +75,16 @@ static struct go_probe_event *new_event(int class_id, int method_id, int count) 
     event->method_id = method_id;
     event->count = count;
 
-    __builtin_memset(event->args, 0, count * ARG_LENGTH);
-
     return event;
 }
 
-static void free_event(struct go_probe_event *event) {
+static __always_inline void free_event(struct go_probe_event *event) {
 #ifdef USE_RING_BUFFER
     bpf_ringbuf_discard(event, 0);
 #endif
 }
 
-static void submit_event(struct pt_regs *ctx, struct go_probe_event *event) {
-    __builtin_memset(event->stack_trace, 0, sizeof(event->stack_trace));
-
+static __always_inline void submit_event(struct pt_regs *ctx, struct go_probe_event *event) {
     if (traceback(event, PT_REGS_RET(ctx)) < 0) {
         free_event(event);
         return;

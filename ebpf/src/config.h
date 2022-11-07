@@ -15,7 +15,7 @@ struct {
 int register_based = 0;
 #endif
 
-static int is_register_based() {
+static __always_inline int is_register_based() {
 #ifdef BPF_NO_GLOBAL_DATA
     __u32 index = 0;
     int *config = bpf_map_lookup_elem(&config_map, &index);
