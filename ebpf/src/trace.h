@@ -22,7 +22,7 @@ struct {
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __type(key, __u32);
-    __type(value, struct go_probe_event);
+    __type(value, go_probe_event);
     __uint(max_entries, 1);
 } cache SEC(".maps");
 
@@ -33,7 +33,7 @@ struct {
 } events SEC(".maps");
 #endif
 
-static __always_inline int traceback(struct go_probe_event *event, uintptr_t sp) {
+static __always_inline int traceback(go_probe_event *event, uintptr_t sp) {
     uintptr_t pc;
     int frame_size = 0;
 
@@ -60,12 +60,12 @@ static __always_inline int traceback(struct go_probe_event *event, uintptr_t sp)
     return 0;
 }
 
-static __always_inline struct go_probe_event *new_event(int class_id, int method_id, int count) {
+static __always_inline go_probe_event *new_event(int class_id, int method_id, int count) {
 #ifdef USE_RING_BUFFER
-    struct go_probe_event *event = bpf_ringbuf_reserve(&events, sizeof(struct go_probe_event), 0);
+    go_probe_event *event = bpf_ringbuf_reserve(&events, sizeof(go_probe_event), 0);
 #else
     __u32 index = 0;
-    struct go_probe_event* event = bpf_map_lookup_elem(&cache, &index);
+    go_probe_event *event = bpf_map_lookup_elem(&cache, &index);
 #endif
     if (!event)
         return NULL;
@@ -78,13 +78,13 @@ static __always_inline struct go_probe_event *new_event(int class_id, int method
     return event;
 }
 
-static __always_inline void free_event(struct go_probe_event *event) {
+static __always_inline void free_event(go_probe_event *event) {
 #ifdef USE_RING_BUFFER
     bpf_ringbuf_discard(event, 0);
 #endif
 }
 
-static __always_inline void submit_event(struct pt_regs *ctx, struct go_probe_event *event) {
+static __always_inline void submit_event(struct pt_regs *ctx, go_probe_event *event) {
     if (traceback(event, PT_REGS_RET(ctx)) < 0) {
         free_event(event);
         return;
@@ -93,7 +93,7 @@ static __always_inline void submit_event(struct pt_regs *ctx, struct go_probe_ev
 #ifdef USE_RING_BUFFER
     bpf_ringbuf_submit(event, 0);
 #else
-    bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, event, sizeof(struct go_probe_event));
+    bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, event, sizeof(go_probe_event));
 #endif
 }
 

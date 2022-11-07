@@ -6,6 +6,25 @@
 #include <zero/os/process.h>
 #include <go/symbol/reader.h>
 
+struct API {
+    const char *name;
+    const char *probe;
+    bool ignoreCase;
+};
+
+constexpr auto GOLANG_API = {
+        API {
+                "os/exec.Command",
+                "os_exec_command",
+                false
+        },
+        {
+                "os/exec.(*Cmd).Start",
+                "os_exec_cmd_start",
+                false
+        }
+};
+
 int onLog(libbpf_print_level level, const char *format, va_list args) {
     va_list copy;
     va_copy(copy, args);
@@ -164,13 +183,6 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    auto it = symbolTable->find("os/exec.(*Cmd).Start");
-
-    if (it == symbolTable->end()) {
-        LOG_INFO("find symbol failed");
-        return -1;
-    }
-
     libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
     libbpf_set_print(onLog);
 
@@ -194,18 +206,44 @@ int main(int argc, char **argv) {
     skeleton->bss->register_based = major > 1 || (major == 1 && minor >= 7);
 #endif
 
-    skeleton->links.os_exec_cmd_start = bpf_program__attach_uprobe(
-            skeleton->progs.os_exec_cmd_start,
-            false,
-            pid,
-            path.string().c_str(),
-            it.operator*().symbol().entry() - processMapping->start
-    );
+    for (const auto &api: GOLANG_API) {
+        auto it = std::find_if(symbolTable->begin(), symbolTable->end(), [&](const auto &entry) {
+            const char *name = entry.symbol().name();
 
-    if (!skeleton->links.os_exec_cmd_start) {
-        LOG_ERROR("failed to attach: %s", strerror(errno));
-        probe_bpf::destroy(skeleton);
-        return -1;
+            if (api.ignoreCase)
+                return strcasecmp(api.name, name) == 0;
+
+            return strcmp(api.name, name) == 0;
+        });
+
+        if (it == symbolTable->end()) {
+            LOG_WARNING("function %s not found", api.name);
+            continue;
+        }
+
+        auto program = std::find_if(skeleton->skeleton->progs, skeleton->skeleton->progs + skeleton->skeleton->prog_cnt, [&](const auto &program) {
+            return strcmp(api.probe, program.name) == 0;
+        });
+
+        if (program == skeleton->skeleton->progs + skeleton->skeleton->prog_cnt) {
+            LOG_WARNING("probe %s not found", api.probe);
+            continue;
+        }
+
+        LOG_INFO("attach function: %s", api.name);
+
+        *program->link = bpf_program__attach_uprobe(
+                *program->prog,
+                false,
+                pid,
+                path.string().c_str(),
+                it.operator*().symbol().entry() - processMapping->start
+        );
+
+        if (!*program->link) {
+            LOG_ERROR("failed to attach: %s", strerror(errno));
+            continue;
+        }
     }
 
     std::pair<bpf_map *, go::symbol::SymbolTable &> context = {
