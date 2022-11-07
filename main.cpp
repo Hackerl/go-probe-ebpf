@@ -195,7 +195,7 @@ int main(int argc, char **argv) {
 
 #ifdef BPF_NO_GLOBAL_DATA
     uint32_t index = 0;
-    int registerBased = major > 1 || (major == 1 && minor >= 7);
+    int registerBased = major > 1 || (major == 1 && minor >= 17);
 
     if (bpf_map__update_elem(skeleton->maps.config_map, &index, sizeof(index), &registerBased, sizeof(registerBased), BPF_ANY) < 0) {
         LOG_ERROR("update map failed");
@@ -203,7 +203,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 #else
-    skeleton->bss->register_based = major > 1 || (major == 1 && minor >= 7);
+    skeleton->bss->register_based = major > 1 || (major == 1 && minor >= 17);
 #endif
 
     for (const auto &api: GOLANG_API) {
