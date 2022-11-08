@@ -22,6 +22,31 @@ constexpr auto GOLANG_API = {
                 "os/exec.(*Cmd).Start",
                 "os_exec_cmd_start",
                 false
+        },
+        {
+                "os.OpenFile",
+                "os_openfile",
+                false
+        },
+        {
+                "os.Remove",
+                "os_remove",
+                false
+        },
+        {
+                "os.RemoveAll",
+                "os_remove_all",
+                false
+        },
+        {
+                "os.Rename",
+                "os_rename",
+                true
+        },
+        {
+                "io/ioutil.ReadDir",
+                "io_ioutil_readdir",
+                false
         }
 };
 

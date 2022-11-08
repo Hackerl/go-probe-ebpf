@@ -80,3 +80,155 @@ int os_exec_cmd_start(struct pt_regs *ctx) {
 
     return 0;
 }
+
+SEC("uprobe/os_openfile")
+int os_openfile(struct pt_regs *ctx) {
+    string path;
+    go_int flag;
+    go_uint32 mode;
+
+    if (is_register_based()) {
+        path.data = (const char *) GO_REGS_PARM1(ctx);
+        path.length = (size_t) GO_REGS_PARM2(ctx);
+
+        flag = (go_int) GO_REGS_PARM3(ctx);
+        mode = (go_uint32) GO_REGS_PARM4(ctx);
+    } else {
+        if (bpf_probe_read_user(&path, sizeof(string), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t))) < 0)
+            return 0;
+
+        if (bpf_probe_read_user(&flag, sizeof(go_int), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string))) < 0)
+            return 0;
+
+        if (bpf_probe_read_user(&mode, sizeof(go_uint32), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string) + sizeof(go_int))) < 0)
+            return 0;
+    }
+
+    go_probe_event *event = new_event(1, 0, 3);
+
+    if (!event)
+        return 0;
+
+    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0)
+        return -1;
+
+    if (stringify_go_int64(flag, event->args[1], ARG_LENGTH) < 0)
+        return -1;
+
+    if (stringify_go_uint64(mode, event->args[2], ARG_LENGTH) < 0)
+        return -1;
+
+    submit_event(ctx, event);
+
+    return 0;
+}
+
+SEC("uprobe/os_remove")
+int os_remove(struct pt_regs *ctx) {
+    string path;
+
+    if (is_register_based()) {
+        path.data = (const char *) GO_REGS_PARM1(ctx);
+        path.length = (size_t) GO_REGS_PARM2(ctx);
+    } else {
+        if (bpf_probe_read_user(&path, sizeof(string), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t))) < 0)
+            return 0;
+    }
+
+    go_probe_event *event = new_event(1, 1, 1);
+
+    if (!event)
+        return 0;
+
+    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0)
+        return -1;
+
+    submit_event(ctx, event);
+
+    return 0;
+}
+
+SEC("uprobe/os_remove_all")
+int os_remove_all(struct pt_regs *ctx) {
+    string path;
+
+    if (is_register_based()) {
+        path.data = (const char *) GO_REGS_PARM1(ctx);
+        path.length = (size_t) GO_REGS_PARM2(ctx);
+    } else {
+        if (bpf_probe_read_user(&path, sizeof(string), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t))) < 0)
+            return 0;
+    }
+
+    go_probe_event *event = new_event(1, 2, 1);
+
+    if (!event)
+        return 0;
+
+    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0)
+        return -1;
+
+    submit_event(ctx, event);
+
+    return 0;
+}
+
+SEC("uprobe/os_rename")
+int os_rename(struct pt_regs *ctx) {
+    string src;
+    string dst;
+
+    if (is_register_based()) {
+        src.data = (const char *) GO_REGS_PARM1(ctx);
+        src.length = (size_t) GO_REGS_PARM2(ctx);
+
+        dst.data = (const char *) GO_REGS_PARM3(ctx);
+        dst.length = (size_t) GO_REGS_PARM4(ctx);
+    } else {
+        if (bpf_probe_read_user(&src, sizeof(string), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t))) < 0)
+            return 0;
+
+        if (bpf_probe_read_user(&dst, sizeof(string), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string))) < 0)
+            return 0;
+    }
+
+    go_probe_event *event = new_event(1, 3, 2);
+
+    if (!event)
+        return 0;
+
+    if (stringify_string(&src, event->args[0], ARG_LENGTH) < 0)
+        return -1;
+
+    if (stringify_string(&dst, event->args[1], ARG_LENGTH) < 0)
+        return -1;
+
+    submit_event(ctx, event);
+
+    return 0;
+}
+
+SEC("uprobe/io_ioutil_readdir")
+int io_ioutil_readdir(struct pt_regs *ctx) {
+    string path;
+
+    if (is_register_based()) {
+        path.data = (const char *) GO_REGS_PARM1(ctx);
+        path.length = (size_t) GO_REGS_PARM2(ctx);
+    } else {
+        if (bpf_probe_read_user(&path, sizeof(string), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t))) < 0)
+            return 0;
+    }
+
+    go_probe_event *event = new_event(1, 4, 1);
+
+    if (!event)
+        return 0;
+
+    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0)
+        return -1;
+
+    submit_event(ctx, event);
+
+    return 0;
+}

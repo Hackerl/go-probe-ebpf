@@ -7,6 +7,78 @@
 #include <bpf/bpf_helpers.h>
 
 #define SLICE_MAX_COUNT 10
+#define INT64_STR_MAX_LENGTH 19
+#define UINT64_STR_MAX_LENGTH 20
+
+static __always_inline int stringify_go_uint64(go_uint64 num, char *buffer, size_t size) {
+    size_t length = 0;
+    go_uint64 n = num;
+
+#pragma unroll
+    for (int i = 0; i < UINT64_STR_MAX_LENGTH; i++) {
+        length++;
+        n /= 10;
+
+        if (n == 0)
+            break;
+    }
+
+    if (length >= size)
+        return -1;
+
+    n = num;
+
+#pragma unroll
+    for (int i = 0; i < UINT64_STR_MAX_LENGTH; i++) {
+        buffer[BOUND(length - i - 1, ARG_LENGTH)] = n % 10 + '0';
+        n /= 10;
+
+        if (n == 0)
+            break;
+    }
+
+    buffer[BOUND(length, ARG_LENGTH)] = 0;
+
+    return (int) length;
+}
+
+static __always_inline int stringify_go_int64(go_int64 num, char *buffer, size_t size) {
+    size_t length = 0;
+
+    if (num < 0) {
+        num = -num;
+        buffer[BOUND(length++, ARG_LENGTH)] = '-';
+    }
+
+    go_int64 n = num;
+
+#pragma unroll
+    for (int i = 0; i < INT64_STR_MAX_LENGTH; i++) {
+        length++;
+        n /= 10;
+
+        if (n == 0)
+            break;
+    }
+
+    if (length >= size)
+        return -1;
+
+    n = num;
+
+#pragma unroll
+    for (int i = 0; i < INT64_STR_MAX_LENGTH; i++) {
+        buffer[BOUND(length - i - 1, ARG_LENGTH)] = n % 10 + '0';
+        n /= 10;
+
+        if (n == 0)
+            break;
+    }
+
+    buffer[BOUND(length, ARG_LENGTH)] = 0;
+
+    return (int) length;
+}
 
 static __always_inline int stringify_string(string *str, char *buffer, size_t size) {
     if (!str->data || str->length <= 0)
