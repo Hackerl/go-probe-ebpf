@@ -5,6 +5,7 @@
 #include "event.h"
 #include "macro.h"
 #include <bpf/bpf_helpers.h>
+#include <sys/param.h>
 
 #define SLICE_MAX_COUNT 10
 #define INT64_STR_MAX_LENGTH 19
@@ -81,16 +82,10 @@ static __always_inline int stringify_go_int64(go_int64 num, char *buffer, size_t
 }
 
 static __always_inline int stringify_string(string *str, char *buffer, size_t size) {
-    if (!str->data || str->length <= 0)
+    if (!str->data || str->length == 0)
         return 0;
 
-    __u32 length;
-    __u32 remain = size - 1;
-
-    if (str->length > remain)
-        length = remain;
-    else
-        length = str->length;
+    volatile __u32 length = MIN(str->length, size - 1);
 
     if (bpf_probe_read_user(buffer, BOUND(length, ARG_LENGTH), str->data) < 0)
         return -1;
@@ -104,7 +99,7 @@ static __always_inline int stringify_string_slice(slice *s, char *buffer, size_t
     if (!s->data || !s->count)
         return 0;
 
-    size_t length = 0;
+    volatile size_t length = 0;
 
 #pragma unroll
     for (int i = 0; i < SLICE_MAX_COUNT * 2 - 1; i++) {
