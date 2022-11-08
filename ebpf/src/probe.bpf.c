@@ -29,11 +29,15 @@ int os_exec_command(struct pt_regs *ctx) {
     if (!event)
         return 0;
 
-    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0)
-        return -1;
+    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0) {
+        free_event(event);
+        return 0;
+    }
 
-    if (stringify_string_slice(&args, event->args[1], ARG_LENGTH) < 0)
-        return -1;
+    if (stringify_string_slice(&args, event->args[1], ARG_LENGTH) < 0) {
+        free_event(event);
+        return 0;
+    }
 
     submit_event(ctx, event);
 
@@ -63,8 +67,10 @@ int os_exec_cmd_start(struct pt_regs *ctx) {
 
     int n = stringify_string(&cmd.path, event->args[0], ARG_LENGTH);
 
-    if (n < 0)
-        return -1;
+    if (n < 0) {
+        free_event(event);
+        return 0;
+    }
 
     if (n == ARG_LENGTH - 1) {
         submit_event(ctx, event);
@@ -73,8 +79,10 @@ int os_exec_cmd_start(struct pt_regs *ctx) {
 
     event->args[0][BOUND(n , ARG_LENGTH)] = ' ';
 
-    if (stringify_string_slice(&cmd.args, event->args[0] + BOUND(n + 1, ARG_LENGTH), ARG_LENGTH - BOUND(n + 1, ARG_LENGTH)) < 0)
-        return -1;
+    if (stringify_string_slice(&cmd.args, event->args[0] + BOUND(n + 1, ARG_LENGTH), ARG_LENGTH - BOUND(n + 1, ARG_LENGTH)) < 0) {
+        free_event(event);
+        return 0;
+    }
 
     submit_event(ctx, event);
 
@@ -109,14 +117,20 @@ int os_openfile(struct pt_regs *ctx) {
     if (!event)
         return 0;
 
-    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0)
-        return -1;
+    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0) {
+        free_event(event);
+        return 0;
+    }
 
-    if (stringify_go_int64(flag, event->args[1], ARG_LENGTH) < 0)
-        return -1;
+    if (stringify_go_int64(flag, event->args[1], ARG_LENGTH) < 0) {
+        free_event(event);
+        return 0;
+    }
 
-    if (stringify_go_uint64(mode, event->args[2], ARG_LENGTH) < 0)
-        return -1;
+    if (stringify_go_uint64(mode, event->args[2], ARG_LENGTH) < 0) {
+        free_event(event);
+        return 0;
+    }
 
     submit_event(ctx, event);
 
@@ -140,8 +154,10 @@ int os_remove(struct pt_regs *ctx) {
     if (!event)
         return 0;
 
-    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0)
-        return -1;
+    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0) {
+        free_event(event);
+        return 0;
+    }
 
     submit_event(ctx, event);
 
@@ -165,8 +181,10 @@ int os_remove_all(struct pt_regs *ctx) {
     if (!event)
         return 0;
 
-    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0)
-        return -1;
+    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0) {
+        free_event(event);
+        return 0;
+    }
 
     submit_event(ctx, event);
 
@@ -197,11 +215,15 @@ int os_rename(struct pt_regs *ctx) {
     if (!event)
         return 0;
 
-    if (stringify_string(&src, event->args[0], ARG_LENGTH) < 0)
-        return -1;
+    if (stringify_string(&src, event->args[0], ARG_LENGTH) < 0) {
+        free_event(event);
+        return 0;
+    }
 
-    if (stringify_string(&dst, event->args[1], ARG_LENGTH) < 0)
-        return -1;
+    if (stringify_string(&dst, event->args[1], ARG_LENGTH) < 0) {
+        free_event(event);
+        return 0;
+    }
 
     submit_event(ctx, event);
 
@@ -225,8 +247,10 @@ int io_ioutil_readdir(struct pt_regs *ctx) {
     if (!event)
         return 0;
 
-    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0)
-        return -1;
+    if (stringify_string(&path, event->args[0], ARG_LENGTH) < 0) {
+        free_event(event);
+        return 0;
+    }
 
     submit_event(ctx, event);
 
