@@ -25,7 +25,7 @@ static __always_inline int stringify_go_uint64(go_uint64 num, char *buffer, size
     }
 
     if (length >= size)
-        return -1;
+        return 0;
 
     n = num;
 
@@ -63,7 +63,7 @@ static __always_inline int stringify_go_int64(go_int64 num, char *buffer, size_t
     }
 
     if (length >= size)
-        return -1;
+        return 0;
 
     n = num;
 
@@ -123,6 +123,108 @@ static __always_inline int stringify_string_slice(slice *s, char *buffer, size_t
 
         length += n;
     }
+
+    buffer[BOUND(length, ARG_LENGTH)] = 0;
+
+    return (int) length;
+}
+
+static __always_inline int stringify_ip(slice *ip, char *buffer, size_t size) {
+    if (ip->count != 4)
+        return 0;
+
+    unsigned char bytes[4];
+
+    if (bpf_probe_read_user(&bytes, sizeof(bytes), ip->data) < 0)
+        return -1;
+
+    size_t length = 0;
+
+#pragma unroll
+    for (int i = 0; i < 4 * 2 - 1; i++) {
+        if (length >= size - 1) {
+            buffer[0] = 0;
+            return 0;
+        }
+
+        if (i % 2) {
+            buffer[BOUND(length++, ARG_LENGTH)] = '.';
+            continue;
+        }
+
+        int n = stringify_go_uint64(bytes[i/2], buffer + BOUND(length, ARG_LENGTH), size - BOUND(length, ARG_LENGTH));
+
+        if (n < 0)
+            return -1;
+
+        length += n;
+    }
+
+    buffer[BOUND(length, ARG_LENGTH)] = 0;
+
+    return (int) length;
+}
+
+static __always_inline int stringify_tcp_address(tcp_address *address, char *buffer, size_t size) {
+    size_t length = 0;
+
+    int n = stringify_ip(&address->ip, buffer, size);
+
+    if (n < 0)
+        return -1;
+
+    length += n;
+
+    if (n >= size - 1) {
+        buffer[BOUND(length, ARG_LENGTH)] = 0;
+        return (int) length;
+    }
+
+    buffer[BOUND(length++, ARG_LENGTH)] = ':';
+
+    n = stringify_go_uint64(address->port, buffer + BOUND(length, ARG_LENGTH), size - BOUND(length, ARG_LENGTH));
+
+    if (n < 0)
+        return -1;
+
+    length += n;
+
+    buffer[BOUND(length, ARG_LENGTH)] = 0;
+
+    return (int) length;
+}
+
+static __always_inline int stringify_ip_address(ip_address *address, char *buffer, size_t size) {
+    return stringify_ip(&address->ip, buffer, size);
+}
+
+static __always_inline int stringify_udp_address(udp_address *address, char *buffer, size_t size) {
+    return stringify_tcp_address(address, buffer, size);
+}
+
+static __always_inline int stringify_unix_address(unix_address *address, char *buffer, size_t size) {
+    size_t length = 0;
+
+    int n = stringify_string(&address->name, buffer, size);
+
+    if (n < 0)
+        return -1;
+
+    length += n;
+
+    if (n >= size - 1 || !address->net.data || !address->net.length) {
+        buffer[BOUND(length, ARG_LENGTH)] = 0;
+        return (int) length;
+    }
+
+    buffer[BOUND(length++, ARG_LENGTH)] = ':';
+
+    n = stringify_string(&address->net, buffer + BOUND(length, ARG_LENGTH), size - BOUND(length, ARG_LENGTH));
+
+    if (n < 0)
+        return -1;
+
+    length += n;
 
     buffer[BOUND(length, ARG_LENGTH)] = 0;
 

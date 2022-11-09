@@ -40,4 +40,20 @@ typedef struct {
     slice args;
 } os_exec_cmd;
 
+typedef struct {
+    slice ip;
+    go_int port;
+    string zone;
+} tcp_address, udp_address;
+
+typedef struct {
+    slice ip;
+    string zone;
+} ip_address;
+
+typedef struct {
+    string name;
+    string net;
+} unix_address;
+
 #endif //GO_PROBE_EBPF_TYPE_H

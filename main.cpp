@@ -47,6 +47,31 @@ constexpr auto GOLANG_API = {
                 "io/ioutil.ReadDir",
                 "io_ioutil_readdir",
                 false
+        },
+        {
+                "net.Dial",
+                "net_dial",
+                false
+        },
+        {
+                "net.DialTCP",
+                "net_dial_tcp",
+                false
+        },
+        {
+                "net.DialIP",
+                "net_dial_ip",
+                false
+        },
+        {
+                "net.DialUDP",
+                "net_dial_udp",
+                false
+        },
+        {
+                "net.DialUnix",
+                "net_dial_unix",
+                false
         }
 };
 
