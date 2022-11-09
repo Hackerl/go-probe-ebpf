@@ -299,20 +299,15 @@ int net_dial(struct pt_regs *ctx) {
 SEC("uprobe/net_dial_tcp")
 int net_dial_tcp(struct pt_regs *ctx) {
     string network;
-    tcp_address *local;
     tcp_address *remote;
 
     if (is_register_based()) {
         network.data = (const char *) GO_REGS_PARM1(ctx);
         network.length = (size_t) GO_REGS_PARM2(ctx);
 
-        local = (tcp_address *) GO_REGS_PARM3(ctx);
         remote = (tcp_address *) GO_REGS_PARM4(ctx);
     } else {
         if (bpf_probe_read_user(&network, sizeof(string), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t))) < 0)
-            return 0;
-
-        if (bpf_probe_read_user(&local, sizeof(tcp_address *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string))) < 0)
             return 0;
 
         if (bpf_probe_read_user(&remote, sizeof(tcp_address *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string) + sizeof(uintptr_t))) < 0)
@@ -330,18 +325,6 @@ int net_dial_tcp(struct pt_regs *ctx) {
     }
 
     tcp_address address;
-
-    if (!local) {
-        event->args[1][0] = 0;
-    } else {
-        if (bpf_probe_read_user(&address, sizeof(tcp_address), local) < 0)
-            return 0;
-
-        if (stringify_tcp_address(&address, event->args[1], ARG_LENGTH) < 0) {
-            free_event(event);
-            return 0;
-        }
-    }
 
     if (!remote)
         return 0;
@@ -362,20 +345,15 @@ int net_dial_tcp(struct pt_regs *ctx) {
 SEC("uprobe/net_dial_ip")
 int net_dial_ip(struct pt_regs *ctx) {
     string network;
-    ip_address *local;
     ip_address *remote;
 
     if (is_register_based()) {
         network.data = (const char *) GO_REGS_PARM1(ctx);
         network.length = (size_t) GO_REGS_PARM2(ctx);
 
-        local = (ip_address *) GO_REGS_PARM3(ctx);
         remote = (ip_address *) GO_REGS_PARM4(ctx);
     } else {
         if (bpf_probe_read_user(&network, sizeof(string), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t))) < 0)
-            return 0;
-
-        if (bpf_probe_read_user(&local, sizeof(ip_address *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string))) < 0)
             return 0;
 
         if (bpf_probe_read_user(&remote, sizeof(ip_address *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string) + sizeof(uintptr_t))) < 0)
@@ -393,18 +371,6 @@ int net_dial_ip(struct pt_regs *ctx) {
     }
 
     ip_address address;
-
-    if (!local) {
-        event->args[1][0] = 0;
-    } else {
-        if (bpf_probe_read_user(&address, sizeof(ip_address), local) < 0)
-            return 0;
-
-        if (stringify_ip_address(&address, event->args[1], ARG_LENGTH) < 0) {
-            free_event(event);
-            return 0;
-        }
-    }
 
     if (!remote)
         return 0;
@@ -425,20 +391,15 @@ int net_dial_ip(struct pt_regs *ctx) {
 SEC("uprobe/net_dial_udp")
 int net_dial_udp(struct pt_regs *ctx) {
     string network;
-    udp_address *local;
     udp_address *remote;
 
     if (is_register_based()) {
         network.data = (const char *) GO_REGS_PARM1(ctx);
         network.length = (size_t) GO_REGS_PARM2(ctx);
 
-        local = (udp_address *) GO_REGS_PARM3(ctx);
         remote = (udp_address *) GO_REGS_PARM4(ctx);
     } else {
         if (bpf_probe_read_user(&network, sizeof(string), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t))) < 0)
-            return 0;
-
-        if (bpf_probe_read_user(&local, sizeof(udp_address *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string))) < 0)
             return 0;
 
         if (bpf_probe_read_user(&remote, sizeof(udp_address *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string) + sizeof(uintptr_t))) < 0)
@@ -456,18 +417,6 @@ int net_dial_udp(struct pt_regs *ctx) {
     }
 
     udp_address address;
-
-    if (!local) {
-        event->args[1][0] = 0;
-    } else {
-        if (bpf_probe_read_user(&address, sizeof(udp_address), local) < 0)
-            return 0;
-
-        if (stringify_udp_address(&address, event->args[1], ARG_LENGTH) < 0) {
-            free_event(event);
-            return 0;
-        }
-    }
 
     if (!remote)
         return 0;
@@ -488,20 +437,15 @@ int net_dial_udp(struct pt_regs *ctx) {
 SEC("uprobe/net_dial_unix")
 int net_dial_unix(struct pt_regs *ctx) {
     string network;
-    unix_address *local;
     unix_address *remote;
 
     if (is_register_based()) {
         network.data = (const char *) GO_REGS_PARM1(ctx);
         network.length = (size_t) GO_REGS_PARM2(ctx);
 
-        local = (unix_address *) GO_REGS_PARM3(ctx);
         remote = (unix_address *) GO_REGS_PARM4(ctx);
     } else {
         if (bpf_probe_read_user(&network, sizeof(string), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t))) < 0)
-            return 0;
-
-        if (bpf_probe_read_user(&local, sizeof(unix_address *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string))) < 0)
             return 0;
 
         if (bpf_probe_read_user(&remote, sizeof(unix_address *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) + sizeof(string) + sizeof(uintptr_t))) < 0)
@@ -519,18 +463,6 @@ int net_dial_unix(struct pt_regs *ctx) {
     }
 
     unix_address address;
-
-    if (!local) {
-        event->args[1][0] = 0;
-    } else {
-        if (bpf_probe_read_user(&address, sizeof(unix_address), local) < 0)
-            return 0;
-
-        if (stringify_unix_address(&address, event->args[1], ARG_LENGTH) < 0) {
-            free_event(event);
-            return 0;
-        }
-    }
 
     if (!remote)
         return 0;

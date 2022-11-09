@@ -75,6 +75,10 @@ static __always_inline go_probe_event *new_event(int class_id, int method_id, in
     event->method_id = method_id;
     event->count = count;
 
+#pragma unroll
+    for (int i = 0; i < count; i++)
+        event->args[i][0] = 0;
+
     return event;
 }
 
