@@ -37,7 +37,7 @@ static __always_inline int traceback(go_probe_event *event, uintptr_t sp) {
     uintptr_t pc;
     int frame_size = 0;
 
-#pragma unroll
+    UNROLL_LOOP
     for (int i = 0; i < TRACE_COUNT; i++) {
         if (bpf_probe_read_user(&pc, sizeof(uintptr_t), (void *) (sp + frame_size)) < 0)
             return -1;
@@ -75,7 +75,7 @@ static __always_inline go_probe_event *new_event(int class_id, int method_id, in
     event->method_id = method_id;
     event->count = count;
 
-#pragma unroll
+    UNROLL_LOOP
     for (int i = 0; i < count; i++)
         event->args[i][0] = 0;
 

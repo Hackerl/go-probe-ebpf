@@ -4,6 +4,7 @@
 #include <bpf/bpf_tracing.h>
 
 #define BOUND(length, limit) (length & (limit - 1))
+#define UNROLL_LOOP _Pragma("clang loop unroll(full)")
 
 #define GO_PARM1_REGS rax
 #define GO_PARM2_REGS rbx

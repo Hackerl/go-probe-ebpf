@@ -1,3 +1,4 @@
+#include "api/api.h"
 #include "ebpf/src/event.h"
 #include "ebpf/probe.skel.h"
 #include <bpf/bpf.h>
@@ -5,75 +6,6 @@
 #include <zero/cmdline.h>
 #include <zero/os/process.h>
 #include <go/symbol/reader.h>
-
-struct API {
-    const char *name;
-    const char *probe;
-    bool ignoreCase;
-};
-
-constexpr auto GOLANG_API = {
-        API {
-                "os/exec.Command",
-                "os_exec_command",
-                false
-        },
-        {
-                "os/exec.(*Cmd).Start",
-                "os_exec_cmd_start",
-                false
-        },
-        {
-                "os.OpenFile",
-                "os_openfile",
-                false
-        },
-        {
-                "os.Remove",
-                "os_remove",
-                false
-        },
-        {
-                "os.RemoveAll",
-                "os_remove_all",
-                false
-        },
-        {
-                "os.Rename",
-                "os_rename",
-                true
-        },
-        {
-                "io/ioutil.ReadDir",
-                "io_ioutil_readdir",
-                false
-        },
-        {
-                "net.Dial",
-                "net_dial",
-                false
-        },
-        {
-                "net.DialTCP",
-                "net_dial_tcp",
-                false
-        },
-        {
-                "net.DialIP",
-                "net_dial_ip",
-                false
-        },
-        {
-                "net.DialUDP",
-                "net_dial_udp",
-                false
-        },
-        {
-                "net.DialUnix",
-                "net_dial_unix",
-                false
-        }
-};
 
 int onLog(libbpf_print_level level, const char *format, va_list args) {
     va_list copy;
