@@ -41,7 +41,7 @@ int onEvent(void *ctx, void *data, size_t size) {
 void onEvent(void *ctx, int cpu, void *data, __u32 size) {
 #endif
     auto event = (go_probe_event *) data;
-    auto &[map, symbolTable] = *(std::pair<bpf_map *, go::symbol::SymbolTable &> *) ctx;
+    auto symbolTable = (go::symbol::SymbolTable *) ctx;
 
     LOG_INFO("pid: %d class: %d method: %d", event->pid, event->class_id, event->method_id);
 
@@ -51,10 +51,13 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
     for (int i = 0; i < event->count; i++)
         args.emplace_back(event->args[i]);
 
-    for (int i = 0; i < TRACE_COUNT; i++) {
-        auto it = symbolTable.find(event->stack_trace[i]);
+    for (const auto &pc: event->stack_trace) {
+        if (!pc)
+            break;
 
-        if (it == symbolTable.end())
+        auto it = symbolTable->find(pc);
+
+        if (it == symbolTable->end())
             break;
 
         char stack[4096] = {};
@@ -63,24 +66,12 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
         snprintf(stack, sizeof(stack),
                  "%s %s:%d +0x%lx",
                  symbol.name(),
-                 symbol.sourceFile(event->stack_trace[i]),
-                 symbol.sourceLine(event->stack_trace[i]),
-                 event->stack_trace[i] - symbol.entry()
+                 symbol.sourceFile(pc),
+                 symbol.sourceLine(pc),
+                 pc - symbol.entry()
         );
 
         stackTrace.emplace_back(stack);
-
-        if (i != TRACE_COUNT - 1 && event->stack_trace[i + 1] == 0) {
-            if (symbol.isStackTop())
-                break;
-
-            uintptr_t pc = event->stack_trace[i];
-            int frame_size = symbol.frameSize(pc);
-
-            bpf_map__update_elem(map, &pc, sizeof(pc), &frame_size, sizeof(frame_size), BPF_NOEXIST);
-
-            break;
-        }
     }
 
     LOG_INFO(
@@ -125,13 +116,6 @@ int main(int argc, char **argv) {
 
     if (!buildInfo) {
         LOG_ERROR("get build info failed");
-        return -1;
-    }
-
-    std::optional<std::string> version = buildInfo->version();
-
-    if (!version) {
-        LOG_ERROR("get golang version failed");
         return -1;
     }
 
@@ -228,13 +212,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    std::pair<bpf_map *, go::symbol::SymbolTable &> context = {
-            skeleton->maps.frame_map,
-            *symbolTable
-    };
-
 #ifdef USE_RING_BUFFER
-    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.events), onEvent, &context, nullptr);
+    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.events), onEvent, &*symbolTable, nullptr);
 
     if (!rb) {
         LOG_ERROR("failed to create ring buffer: %s", strerror(errno));
@@ -248,7 +227,7 @@ int main(int argc, char **argv) {
 
     ring_buffer__free(rb);
 #else
-    perf_buffer *pb = perf_buffer__new(bpf_map__fd(skeleton->maps.events), 64, onEvent, nullptr, &context, nullptr);
+    perf_buffer *pb = perf_buffer__new(bpf_map__fd(skeleton->maps.events), 64, onEvent, nullptr, &*symbolTable, nullptr);
 
     if (!pb) {
         LOG_ERROR("failed to create perf buffer: %s", strerror(errno));

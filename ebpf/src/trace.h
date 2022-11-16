@@ -6,13 +6,6 @@
 #include "event.h"
 #include "macro.h"
 
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 8192);
-    __type(key, uintptr_t);
-    __type(value, int);
-} frame_map SEC(".maps");
-
 #ifdef USE_RING_BUFFER
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -33,28 +26,25 @@ struct {
 } events SEC(".maps");
 #endif
 
-static __always_inline int traceback(go_probe_event *event, uintptr_t sp) {
-    uintptr_t pc;
-    int frame_size = 0;
+static __always_inline int traceback(struct pt_regs *ctx, go_probe_event *event) {
+    if (bpf_probe_read_user(event->stack_trace, sizeof(uintptr_t), (void *) PT_REGS_RET(ctx)) < 0)
+        return -1;
+
+    uintptr_t fp = PT_REGS_FP(ctx);
 
     UNROLL_LOOP
-    for (int i = 0; i < TRACE_COUNT; i++) {
-        if (bpf_probe_read_user(&pc, sizeof(uintptr_t), (void *) (sp + frame_size)) < 0)
-            return -1;
-
-        event->stack_trace[i] = pc;
-
-        int *v = bpf_map_lookup_elem(&frame_map, &pc);
-
-        if (!v) {
-            if (i == TRACE_COUNT - 1)
-                break;
-
-            event->stack_trace[i + 1] = 0;
+    for (int i = 1; i < TRACE_COUNT; i++) {
+        if (!fp)
             break;
-        }
 
-        frame_size += *v + (int) sizeof(uintptr_t);
+        if (bpf_probe_read_user(event->stack_trace + i, sizeof(uintptr_t), (void *) fp + sizeof(uintptr_t)) < 0)
+            break;
+
+        if (!event->stack_trace[i])
+            break;
+
+        if (bpf_probe_read_user(&fp, sizeof(uintptr_t), (void *) fp) < 0)
+            break;
     }
 
     return 0;
@@ -89,7 +79,7 @@ static __always_inline void free_event(go_probe_event *event) {
 }
 
 static __always_inline void submit_event(struct pt_regs *ctx, go_probe_event *event) {
-    if (traceback(event, PT_REGS_RET(ctx)) < 0) {
+    if (traceback(ctx, event) < 0) {
         free_event(event);
         return;
     }
