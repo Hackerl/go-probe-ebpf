@@ -109,7 +109,9 @@ static __always_inline int stringify_string(string *str, char *buffer, size_t si
 
     volatile __u32 length = MIN(str->length, size - 1);
 
-    if (bpf_probe_read_user(buffer, BOUND(length, ARG_LENGTH), str->data) < 0)
+    // On kernels less than 4.15, the type of arg2 is ARG_CONST_SIZE.
+    // We have to additionally convince the verifier that R2 minimum value is greater than zero.
+    if (bpf_probe_read_user(buffer, BOUND(length - 1, ARG_LENGTH) + 1, str->data) < 0)
         return -1;
 
     buffer[BOUND(length, ARG_LENGTH)] = 0;
