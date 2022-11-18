@@ -61,14 +61,17 @@ static __always_inline int traceback_with_fp(struct pt_regs *ctx, go_probe_event
 }
 
 static __always_inline int traceback(struct pt_regs *ctx, go_probe_event *event) {
+    uintptr_t pc;
     uintptr_t sp = PT_REGS_RET(ctx);
 
     UNROLL_LOOP
     for (int i = 0; i < TRACE_COUNT; i++) {
-        if (bpf_probe_read_user(event->stack_trace + i, sizeof(uintptr_t), (void *) sp) < 0)
+        if (bpf_probe_read_user(&pc, sizeof(uintptr_t), (void *) sp) < 0)
             break;
 
-        int *v = bpf_map_lookup_elem(&frame_map, &event->stack_trace[i]);
+        event->stack_trace[i] = pc;
+
+        int *v = bpf_map_lookup_elem(&frame_map, &pc);
 
         if (!v) {
             if (i != TRACE_COUNT - 1)
