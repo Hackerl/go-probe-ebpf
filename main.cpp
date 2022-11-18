@@ -1,4 +1,5 @@
 #include "api/api.h"
+#include "api/config.h"
 #include "ebpf/src/event.h"
 #include "ebpf/probe.skel.h"
 #include <bpf/bpf.h>
@@ -41,7 +42,7 @@ int onEvent(void *ctx, void *data, size_t size) {
 void onEvent(void *ctx, int cpu, void *data, __u32 size) {
 #endif
     auto event = (go_probe_event *) data;
-    auto symbolTable = (go::symbol::SymbolTable *) ctx;
+    auto &[map, symbolTable] = *(std::pair<bpf_map *, go::symbol::SymbolTable &> *) ctx;
 
     LOG_INFO("pid: %d class: %d method: %d", event->pid, event->class_id, event->method_id);
 
@@ -51,13 +52,15 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
     for (int i = 0; i < event->count; i++)
         args.emplace_back(event->args[i]);
 
-    for (const auto &pc: event->stack_trace) {
+    for (int i = 0; i < TRACE_COUNT; i++) {
+        uintptr_t pc = event->stack_trace[i];
+
         if (!pc)
             break;
 
-        auto it = symbolTable->find(pc);
+        auto it = symbolTable.find(pc);
 
-        if (it == symbolTable->end())
+        if (it == symbolTable.end())
             break;
 
         char stack[4096] = {};
@@ -72,6 +75,16 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
         );
 
         stackTrace.emplace_back(stack);
+
+        if (!map || i == TRACE_COUNT - 1 || event->stack_trace[i + 1] || symbol.isStackTop())
+            continue;
+
+        int frame_size = symbol.frameSize(pc);
+
+        if (frame_size <= 0)
+            break;
+
+        bpf_map__update_elem(map, &pc, sizeof(pc), &frame_size, sizeof(frame_size), BPF_NOEXIST);
     }
 
     LOG_INFO(
@@ -91,9 +104,16 @@ int main(int argc, char **argv) {
     zero::Cmdline cmdline;
 
     cmdline.add<int>("pid", "process id");
+
+    cmdline.addOptional<int>("fp", '\0', "traceback with frame pointer", -1);
+    cmdline.addOptional<int>("abi", '\0', "specify golang calling conventions[0(stack)|1(register)]", -1);
+
     cmdline.parse(argc, argv);
 
     int pid = cmdline.get<int>("pid");
+
+    int fp = cmdline.getOptional<int>("fp");
+    int abi = cmdline.getOptional<int>("abi");
 
     std::error_code ec;
 
@@ -112,43 +132,6 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    std::optional<go::symbol::BuildInfo> buildInfo = reader.buildInfo();
-
-    if (!buildInfo) {
-        LOG_ERROR("get build info failed");
-        return -1;
-    }
-
-    std::optional<std::tuple<int, int>> versionNumber = buildInfo->versionNumber();
-
-    if (!versionNumber) {
-        LOG_ERROR("get golang version number failed");
-        return -1;
-    }
-
-    auto [major, minor] = *versionNumber;
-
-    LOG_INFO("golang version: %d.%d", major, minor);
-
-    std::optional<zero::os::process::ProcessMapping> processMapping = zero::os::process::getImageBase(
-            pid,
-            std::filesystem::read_symlink(path).string()
-    );
-
-    if (!processMapping) {
-        LOG_INFO("get image base failed");
-        return -1;
-    }
-
-    LOG_INFO("image base: %p", processMapping->start);
-
-    std::optional<go::symbol::SymbolTable> symbolTable = reader.symbols(go::symbol::FileMapping, processMapping->start);
-
-    if (!symbolTable) {
-        LOG_INFO("get symbol table failed");
-        return -1;
-    }
-
     libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
     libbpf_set_print(onLog);
 
@@ -159,18 +142,54 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-#ifdef BPF_NO_GLOBAL_DATA
-    uint32_t index = 0;
-    int registerBased = major > 1 || (major == 1 && minor >= 17);
+    std::optional<go::symbol::Version> version = reader.version();
 
-    if (bpf_map__update_elem(skeleton->maps.config_map, &index, sizeof(index), &registerBased, sizeof(registerBased), BPF_ANY) < 0) {
-        LOG_ERROR("update map failed");
+    if (version) {
+        std::optional<std::tuple<int, int>> versionNumber = version->number();
+
+        if (!versionNumber) {
+            LOG_ERROR("get golang version number failed: %s", version->string().c_str());
+            probe_bpf::destroy(skeleton);
+            return -1;
+        }
+
+        auto [major, minor] = *versionNumber;
+
+        LOG_INFO("golang version: %d.%d", major, minor);
+
+        if (abi < 0)
+            abi = major > 1 || (major == 1 && minor >= 17) ? 1 : 0;
+
+        if (fp < 0)
+            fp = major > 1 || (major == 1 && minor >= 7) ? 1 : 0;
+    }
+
+    if (abi >= 0)
+        SET_CONFIG(skeleton, REGISTER_BASED, abi)
+
+    if (fp >= 0)
+        SET_CONFIG(skeleton, FRAME_POINTER, fp)
+
+    std::optional<zero::os::process::ProcessMapping> processMapping = zero::os::process::getImageBase(
+            pid,
+            std::filesystem::read_symlink(path).string()
+    );
+
+    if (!processMapping) {
+        LOG_INFO("get image base failed");
         probe_bpf::destroy(skeleton);
         return -1;
     }
-#else
-    skeleton->bss->register_based = major > 1 || (major == 1 && minor >= 17);
-#endif
+
+    LOG_INFO("image base: %p", processMapping->start);
+
+    std::optional<go::symbol::SymbolTable> symbolTable = reader.symbols(go::symbol::FileMapping, processMapping->start);
+
+    if (!symbolTable) {
+        LOG_INFO("get symbol table failed");
+        probe_bpf::destroy(skeleton);
+        return -1;
+    }
 
     for (const auto &api: GOLANG_API) {
         auto it = std::find_if(symbolTable->begin(), symbolTable->end(), [&](const auto &entry) {
@@ -212,8 +231,13 @@ int main(int argc, char **argv) {
         }
     }
 
+    std::pair<bpf_map *, go::symbol::SymbolTable &> context = {
+            fp != 1 ? skeleton->maps.frame_map : nullptr,
+            *symbolTable
+    };
+
 #ifdef USE_RING_BUFFER
-    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.events), onEvent, &*symbolTable, nullptr);
+    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.events), onEvent, &context, nullptr);
 
     if (!rb) {
         LOG_ERROR("failed to create ring buffer: %s", strerror(errno));
@@ -227,7 +251,7 @@ int main(int argc, char **argv) {
 
     ring_buffer__free(rb);
 #else
-    perf_buffer *pb = perf_buffer__new(bpf_map__fd(skeleton->maps.events), 64, onEvent, nullptr, &*symbolTable, nullptr);
+    perf_buffer *pb = perf_buffer__new(bpf_map__fd(skeleton->maps.events), 64, onEvent, nullptr, &context, nullptr);
 
     if (!pb) {
         LOG_ERROR("failed to create perf buffer: %s", strerror(errno));
