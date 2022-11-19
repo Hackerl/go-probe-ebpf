@@ -168,12 +168,12 @@ static __always_inline int stringify_string_string_slice_map(map *m, char *buffe
         if (i >= (2 ^ m->B) || count >= m->count || length >= size - 1)
             break;
 
-        char b[sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice) - sizeof(void *)];
+        char b[sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice)];
 
         if (bpf_probe_read_user(
                 b,
-                sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice),
-                (char *) m->buckets + i++ * (sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice))
+                sizeof(b),
+                (char *) m->buckets + i * (sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice))
         ) < 0)
             return -1;
 

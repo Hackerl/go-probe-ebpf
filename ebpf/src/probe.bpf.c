@@ -1494,8 +1494,7 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
 
         event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
 
-        int n = stringify_string(&request.method, event->args[1] + BOUND(length, ARG_LENGTH),
-                                 ARG_LENGTH - BOUND(length, ARG_LENGTH));
+        int n = stringify_string(&request.method, event->args[1] + BOUND(length, ARG_LENGTH), ARG_LENGTH - BOUND(length, ARG_LENGTH));
 
         if (n < 0) {
             free_event(event);
@@ -1507,8 +1506,7 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
         event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
         event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
 
-        n = stringify_string(&request.protocol, event->args[1] + BOUND(length, ARG_LENGTH),
-                             ARG_LENGTH - BOUND(length, ARG_LENGTH));
+        n = stringify_string(&request.protocol, event->args[1] + BOUND(length, ARG_LENGTH), ARG_LENGTH - BOUND(length, ARG_LENGTH));
 
         if (n < 0) {
             free_event(event);
@@ -1520,8 +1518,7 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
         event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
         event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
 
-        n = stringify_string(&request.host, event->args[1] + BOUND(length, ARG_LENGTH),
-                             ARG_LENGTH - BOUND(length, ARG_LENGTH));
+        n = stringify_string(&request.host, event->args[1] + BOUND(length, ARG_LENGTH), ARG_LENGTH - BOUND(length, ARG_LENGTH));
 
         if (n < 0) {
             free_event(event);
@@ -1533,8 +1530,7 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
         event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
         event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
 
-        n = stringify_string(&request.remote_address, event->args[1] + BOUND(length, ARG_LENGTH),
-                             ARG_LENGTH - BOUND(length, ARG_LENGTH));
+        n = stringify_string(&request.remote_address, event->args[1] + BOUND(length, ARG_LENGTH), ARG_LENGTH - BOUND(length, ARG_LENGTH));
 
         if (n < 0) {
             free_event(event);

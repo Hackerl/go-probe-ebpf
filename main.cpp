@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
     cmdline.add<int>("pid", "process id");
 
     cmdline.addOptional<int>("fp", '\0', "traceback with frame pointer", -1);
-    cmdline.addOptional<int>("abi", '\0', "specify golang calling conventions[0(stack)|1(register)]", -1);
+    cmdline.addOptional<int>("abi", '\0', "specify golang calling conventions[stack(0)|register(1)]", -1);
 
     cmdline.parse(argc, argv);
 
