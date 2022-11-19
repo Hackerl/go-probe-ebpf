@@ -1464,6 +1464,111 @@ int net_http_new_request_with_context(struct pt_regs *ctx) {
     return 0;
 }
 
+SEC("uprobe/net_http_server_handler_serve_http")
+int net_http_server_handler_serve_http(struct pt_regs *ctx) {
+    http_request *ptr;
+
+    if (is_register_based()) {
+        ptr = (http_request *) GO_REGS_PARM4(ctx);
+    } else {
+        if (bpf_probe_read_user(&ptr, sizeof(http_request *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) * 2 + sizeof(interface))) < 0)
+            return 0;
+    }
+
+    go_probe_event *event = new_event(6, 2, 2);
+
+    if (!event)
+        return 0;
+
+    volatile size_t length = 0;
+
+#ifdef ENABLE_HTTP_HEADER
+    map header;
+#endif
+
+    {
+        http_request request;
+
+        if (bpf_probe_read_user(&request, sizeof(http_request), ptr) < 0)
+            return 0;
+
+        event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
+
+        int n = stringify_string(&request.method, event->args[1] + BOUND(length, ARG_LENGTH),
+                                 ARG_LENGTH - BOUND(length, ARG_LENGTH));
+
+        if (n < 0) {
+            free_event(event);
+            return 0;
+        }
+
+        length += n;
+
+        event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
+        event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
+
+        n = stringify_string(&request.protocol, event->args[1] + BOUND(length, ARG_LENGTH),
+                             ARG_LENGTH - BOUND(length, ARG_LENGTH));
+
+        if (n < 0) {
+            free_event(event);
+            return 0;
+        }
+
+        length += n;
+
+        event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
+        event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
+
+        n = stringify_string(&request.host, event->args[1] + BOUND(length, ARG_LENGTH),
+                             ARG_LENGTH - BOUND(length, ARG_LENGTH));
+
+        if (n < 0) {
+            free_event(event);
+            return 0;
+        }
+
+        length += n;
+
+        event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
+        event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
+
+        n = stringify_string(&request.remote_address, event->args[1] + BOUND(length, ARG_LENGTH),
+                             ARG_LENGTH - BOUND(length, ARG_LENGTH));
+
+        if (n < 0) {
+            free_event(event);
+            return 0;
+        }
+
+        length += n;
+
+#ifdef ENABLE_HTTP_HEADER
+        if (bpf_probe_read_user(&header, sizeof(map), request.header) < 0)
+            return 0;
+#endif
+    }
+
+#ifdef ENABLE_HTTP_HEADER
+    event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
+    event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
+
+    int n = stringify_string_string_slice_map(&header, event->args[1] + BOUND(length, ARG_LENGTH), ARG_LENGTH - BOUND(length, ARG_LENGTH));
+
+    if (n < 0) {
+        free_event(event);
+        return 0;
+    }
+
+    length += n;
+#endif
+
+    event->args[1][BOUND(length++ , ARG_LENGTH)] = '}';
+    submit_event(ctx, event);
+
+    return 0;
+}
+
 SEC("uprobe/plugin_open")
 int plugin_open(struct pt_regs *ctx) {
     string path;

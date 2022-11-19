@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define ARG_COUNT 4
+#define ARG_COUNT 5
 #define ARG_LENGTH 256
 #define TRACE_COUNT 20
 

@@ -36,6 +36,25 @@ typedef struct {
 } string;
 
 typedef struct {
+    go_uint8 top_bits[8];
+    char keys[0];
+    char elems[0];
+    void *overflow;
+} bucket;
+
+typedef struct {
+    go_int count;
+    go_uint8 flags;
+    go_uint8 B;
+    go_uint16 overflow_num;
+    go_uint32 hash0;
+    void *buckets;
+    void *old_buckets;
+    go_uintptr evacuate_num;
+    go_uintptr extra;
+} map;
+
+typedef struct {
     string path;
     slice args;
 } os_exec_cmd;
@@ -55,5 +74,45 @@ typedef struct {
     string name;
     string net;
 } unix_address;
+
+typedef struct {
+    string username;
+    string password;
+    bool password_set;
+} userinfo;
+
+typedef struct {
+    string scheme;
+    string opaque;
+    userinfo *user;
+    string host;
+    string path;
+    string raw_path;
+    bool force_query;
+    string raw_query;
+    string fragment;
+    string raw_fragment;
+} URL;
+
+typedef struct {
+    string method;
+    URL *url;
+    string protocol;
+    go_int proto_major;
+    go_int proto_minor;
+    map *header;
+    interface body;
+    go_uintptr get_body;
+    go_uint64 content_length;
+    slice transfer_encoding;
+    bool close;
+    string host;
+    map *form;
+    map *post_form;
+    go_uintptr multipart_form;
+    map *trailer;
+    string remote_address;
+    string request_uri;
+} http_request;
 
 #endif //GO_PROBE_EBPF_TYPE_H

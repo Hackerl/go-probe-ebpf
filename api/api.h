@@ -211,6 +211,11 @@ constexpr auto GOLANG_API = {
                 false
         },
         {
+                "net/http.serverHandler.ServeHTTP",
+                "net_http_server_handler_serve_http",
+                false
+        },
+        {
                 "plugin.Open",
                 "plugin_open",
                 false

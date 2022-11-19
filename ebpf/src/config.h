@@ -27,7 +27,7 @@ static __always_inline bool is_register_based() {
     __u64 *config = bpf_map_lookup_elem(&config_map, &index);
 
     if (!config)
-        return 0;
+        return false;
 
     return *config;
 #else
@@ -41,7 +41,7 @@ static __always_inline bool has_frame_pointer() {
     __u64 *config = bpf_map_lookup_elem(&config_map, &index);
 
     if (!config)
-        return 0;
+        return false;
 
     return *config;
 #else

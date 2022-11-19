@@ -7,6 +7,11 @@
 #include <bpf/bpf_helpers.h>
 #include <sys/param.h>
 
+#define MAP_MAX_COUNT 2
+#define MAP_BUCKET_MAX_COUNT 8
+#define MAP_MIN_TOP_HASH 5
+#define MAP_WRITING_FLAG 0x4
+
 #define HEX_MAX_COUNT 10
 #define SLICE_MAX_COUNT 10
 #define INT64_STR_MAX_LENGTH 19
@@ -126,18 +131,16 @@ static __always_inline int stringify_string_slice(slice *s, char *buffer, size_t
     volatile size_t length = 0;
 
     UNROLL_LOOP
-    for (int i = 0; i < SLICE_MAX_COUNT * 2 - 1; i++) {
-        if (i >= s->count * 2 - 1 || length >= size - 1)
+    for (int i = 0; i < SLICE_MAX_COUNT; i++) {
+        if (i >= s->count || length >= size - 1)
             break;
 
-        if (i % 2) {
+        if (i > 0)
             buffer[BOUND(length++, ARG_LENGTH)] = ' ';
-            continue;
-        }
 
         string str;
 
-        if (bpf_probe_read_user(&str, sizeof(string), (string *) s->data + i/2) < 0)
+        if (bpf_probe_read_user(&str, sizeof(string), (string *) s->data + i) < 0)
             return -1;
 
         int n = stringify_string(&str, buffer + BOUND(length, ARG_LENGTH), size - BOUND(length, ARG_LENGTH));
@@ -146,6 +149,70 @@ static __always_inline int stringify_string_slice(slice *s, char *buffer, size_t
             break;
 
         length += n;
+    }
+
+    buffer[BOUND(length, ARG_LENGTH)] = 0;
+
+    return (int) length;
+}
+
+static __always_inline int stringify_string_string_slice_map(map *m, char *buffer, size_t size) {
+    if (m->flags & MAP_WRITING_FLAG || m->old_buckets)
+        return 0;
+
+    volatile size_t length = 0;
+    size_t count = 0;
+
+    UNROLL_LOOP
+    for (int i = 0; i < MAP_MAX_COUNT; i++) {
+        if (i >= (2 ^ m->B) || count >= m->count || length >= size - 1)
+            break;
+
+        char b[sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice) - sizeof(void *)];
+
+        if (bpf_probe_read_user(
+                b,
+                sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice),
+                (char *) m->buckets + i++ * (sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice))
+        ) < 0)
+            return -1;
+
+        UNROLL_LOOP
+        for (int j = 0; j < MAP_BUCKET_MAX_COUNT; j++) {
+            if (((bucket *) b)->top_bits[j] < MAP_MIN_TOP_HASH) {
+                if (!((bucket *) b)->top_bits[j])
+                    break;
+
+                continue;
+            }
+
+            if (count++)
+                buffer[BOUND(length++, ARG_LENGTH)] = ' ';
+
+            int n = stringify_string(
+                    (string *) (((bucket *) b)->keys + j * sizeof(string)),
+                    buffer + BOUND(length, ARG_LENGTH),
+                    size - BOUND(length, ARG_LENGTH)
+            );
+
+            if (n < 0)
+                break;
+
+            length += n;
+
+            buffer[BOUND(length++, ARG_LENGTH)] = ':';
+
+            n = stringify_string_slice(
+                    (slice *) (((bucket *) b)->keys + 8 * sizeof(string) + j * sizeof(slice)),
+                    buffer + BOUND(length, ARG_LENGTH),
+                    size - BOUND(length, ARG_LENGTH)
+            );
+
+            if (n < 0)
+                break;
+
+            length += n;
+        }
     }
 
     buffer[BOUND(length, ARG_LENGTH)] = 0;
@@ -162,18 +229,14 @@ static __always_inline int stringify_ipv4(slice *ip, char *buffer, size_t size) 
     volatile size_t length = 0;
 
     UNROLL_LOOP
-    for (int i = 0; i < 4 * 2 - 1; i++) {
-        if (length >= size - 1) {
-            buffer[0] = 0;
-            return 0;
-        }
+    for (int i = 0; i < 4; i++) {
+        if (length >= size - 1)
+            break;
 
-        if (i % 2) {
+        if (i > 0)
             buffer[BOUND(length++, ARG_LENGTH)] = '.';
-            continue;
-        }
 
-        int n = stringify_go_uint64(bytes[i/2], buffer + BOUND(length, ARG_LENGTH), size - BOUND(length, ARG_LENGTH));
+        int n = stringify_go_uint64(bytes[i], buffer + BOUND(length, ARG_LENGTH), size - BOUND(length, ARG_LENGTH));
 
         if (n < 0)
             return -1;
@@ -195,18 +258,14 @@ static __always_inline int stringify_ipv6(slice *ip, char *buffer, size_t size) 
     volatile size_t length = 0;
 
     UNROLL_LOOP
-    for (int i = 0; i < 8 * 2 - 1; i++) {
-        if (length >= size - 1) {
-            buffer[0] = 0;
-            return 0;
-        }
+    for (int i = 0; i < 8; i++) {
+        if (length >= size - 1)
+            break;
 
-        if (i % 2) {
+        if (i > 0)
             buffer[BOUND(length++, ARG_LENGTH)] = ':';
-            continue;
-        }
 
-        int n = hexlify(bytes + i, 2, buffer + BOUND(length, ARG_LENGTH), size - BOUND(length, ARG_LENGTH));
+        int n = hexlify(bytes + i * 2, 2, buffer + BOUND(length, ARG_LENGTH), size - BOUND(length, ARG_LENGTH));
 
         if (n < 0)
             return -1;
