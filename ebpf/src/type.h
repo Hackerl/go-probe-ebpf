@@ -76,27 +76,8 @@ typedef struct {
 } unix_address;
 
 typedef struct {
-    string username;
-    string password;
-    bool password_set;
-} userinfo;
-
-typedef struct {
-    string scheme;
-    string opaque;
-    userinfo *user;
-    string host;
-    string path;
-    string raw_path;
-    bool force_query;
-    string raw_query;
-    string fragment;
-    string raw_fragment;
-} URL;
-
-typedef struct {
     string method;
-    URL *url;
+    void *url;
     string protocol;
     go_int proto_major;
     go_int proto_minor;

@@ -26,4 +26,10 @@
 #define GO_REGS_PARM8(x) (__PT_REGS_CAST(x)->GO_PARM8_REGS)
 #define GO_REGS_PARM9(x) (__PT_REGS_CAST(x)->GO_PARM9_REGS)
 
+#define GO_ABI_0_G_REGS rcx
+#define GO_G_REGS r14
+
+#define GO_REGS_ABI_0_G(x) (__PT_REGS_CAST(x)->GO_ABI_0_G_REGS)
+#define GO_REGS_G(x) (__PT_REGS_CAST(x)->GO_G_REGS)
+
 #endif //GO_PROBE_EBPF_MACRO_H

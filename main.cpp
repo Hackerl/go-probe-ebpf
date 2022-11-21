@@ -3,10 +3,14 @@
 #include "ebpf/src/event.h"
 #include "ebpf/probe.skel.h"
 #include <bpf/bpf.h>
+#include <Zydis/Zydis.h>
 #include <zero/log.h>
 #include <zero/cmdline.h>
 #include <zero/os/process.h>
 #include <go/symbol/reader.h>
+
+constexpr auto MAX_OFFSET = 100;
+constexpr auto INSTRUCTION_BUFFER_SIZE = 128;
 
 int onLog(libbpf_print_level level, const char *format, va_list args) {
     va_list copy;
@@ -87,8 +91,24 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
         bpf_map__update_elem(map, &pc, sizeof(pc), &frame_size, sizeof(frame_size), BPF_NOEXIST);
     }
 
+    std::list<std::string> headers;
+
+    for (const auto &header : event->request.headers) {
+        if (!header[0][0])
+            break;
+
+        headers.push_back(zero::strings::format("%s: %s", header[0], header[1]));
+    }
+
     LOG_INFO(
-            "args: %s stack trace: %s",
+            "request: method{%s} uri{%s} host{%s} remote{%s} headers{%s}"
+            "args: %s "
+            "stack trace: %s",
+            event->request.method,
+            event->request.uri,
+            event->request.host,
+            event->request.remote,
+            zero::strings::join(headers, " ").c_str(),
             zero::strings::join(args, " ").c_str(),
             zero::strings::join(stackTrace, " ").c_str()
     );
@@ -96,6 +116,44 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
 #ifdef USE_RING_BUFFER
     return 0;
 #endif
+}
+
+std::optional<int> getAPIOffset(const go::symbol::Reader &reader, uint64_t address) {
+    std::optional<std::vector<std::byte>> buffer = reader.readVirtualMemory(address, INSTRUCTION_BUFFER_SIZE);
+
+    if (!buffer)
+        return std::nullopt;
+
+    ZydisDecoder decoder;
+
+    if (!ZYAN_SUCCESS(ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64))) {
+        LOG_ERROR("disassembler init failed");
+        return std::nullopt;
+    }
+
+    ZydisDecodedInstruction instruction;
+    ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
+
+    int offset = 0;
+
+    while (true) {
+        if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, buffer->data() + offset, INSTRUCTION_BUFFER_SIZE - offset, &instruction, operands))) {
+            LOG_ERROR("disassemble failed");
+            return std::nullopt;
+        }
+
+        if ((instruction.mnemonic == ZYDIS_MNEMONIC_SUB || instruction.mnemonic == ZYDIS_MNEMONIC_ADD) && operands[0].reg.value == ZYDIS_REGISTER_RSP)
+            break;
+
+        offset += instruction.length;
+
+        if (offset > MAX_OFFSET) {
+            LOG_ERROR("offset out of bounds");
+            return std::nullopt;
+        }
+    }
+
+    return offset;
 }
 
 int main(int argc, char **argv) {
@@ -183,7 +241,7 @@ int main(int argc, char **argv) {
 
     LOG_INFO("image base: %p", processMapping->start);
 
-    std::optional<go::symbol::SymbolTable> symbolTable = reader.symbols(go::symbol::FileMapping, processMapping->start);
+    std::optional<go::symbol::SymbolTable> symbolTable = reader.symbols(go::symbol::AnonymousMemory, processMapping->start);
 
     if (!symbolTable) {
         LOG_INFO("get symbol table failed");
@@ -215,14 +273,23 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        LOG_INFO("attach function: %s", api.name);
+        uint64_t entry = it.operator*().symbol().entry();
+
+        std::optional<int> offset = getAPIOffset(reader, entry);
+
+        if (!offset) {
+            LOG_ERROR("get api offset failed");
+            continue;
+        }
+
+        LOG_INFO("attach function %s: %p+%d", api.name, entry, offset);
 
         *program->link = bpf_program__attach_uprobe(
                 *program->prog,
                 false,
                 pid,
                 path.string().c_str(),
-                it.operator*().symbol().entry() - processMapping->start
+                entry + *offset - processMapping->start
         );
 
         if (!*program->link) {

@@ -1464,107 +1464,6 @@ int net_http_new_request_with_context(struct pt_regs *ctx) {
     return 0;
 }
 
-SEC("uprobe/net_http_server_handler_serve_http")
-int net_http_server_handler_serve_http(struct pt_regs *ctx) {
-    http_request *ptr;
-
-    if (is_register_based()) {
-        ptr = (http_request *) GO_REGS_PARM4(ctx);
-    } else {
-        if (bpf_probe_read_user(&ptr, sizeof(http_request *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) * 2 + sizeof(interface))) < 0)
-            return 0;
-    }
-
-    go_probe_event *event = new_event(6, 2, 2);
-
-    if (!event)
-        return 0;
-
-    volatile size_t length = 0;
-
-#ifdef ENABLE_HTTP_HEADER
-    map header;
-#endif
-
-    {
-        http_request request;
-
-        if (bpf_probe_read_user(&request, sizeof(http_request), ptr) < 0)
-            return 0;
-
-        event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
-
-        int n = stringify_string(&request.method, event->args[1] + BOUND(length, ARG_LENGTH), ARG_LENGTH - BOUND(length, ARG_LENGTH));
-
-        if (n < 0) {
-            free_event(event);
-            return 0;
-        }
-
-        length += n;
-
-        event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
-        event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
-
-        n = stringify_string(&request.protocol, event->args[1] + BOUND(length, ARG_LENGTH), ARG_LENGTH - BOUND(length, ARG_LENGTH));
-
-        if (n < 0) {
-            free_event(event);
-            return 0;
-        }
-
-        length += n;
-
-        event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
-        event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
-
-        n = stringify_string(&request.host, event->args[1] + BOUND(length, ARG_LENGTH), ARG_LENGTH - BOUND(length, ARG_LENGTH));
-
-        if (n < 0) {
-            free_event(event);
-            return 0;
-        }
-
-        length += n;
-
-        event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
-        event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
-
-        n = stringify_string(&request.remote_address, event->args[1] + BOUND(length, ARG_LENGTH), ARG_LENGTH - BOUND(length, ARG_LENGTH));
-
-        if (n < 0) {
-            free_event(event);
-            return 0;
-        }
-
-        length += n;
-
-#ifdef ENABLE_HTTP_HEADER
-        if (bpf_probe_read_user(&header, sizeof(map), request.header) < 0)
-            return 0;
-#endif
-    }
-
-#ifdef ENABLE_HTTP_HEADER
-    event->args[1][BOUND(length++, ARG_LENGTH)] = '}';
-    event->args[1][BOUND(length++, ARG_LENGTH)] = '{';
-
-    int n = stringify_string_string_slice_map(&header, event->args[1] + BOUND(length, ARG_LENGTH), ARG_LENGTH - BOUND(length, ARG_LENGTH));
-
-    if (n < 0) {
-        free_event(event);
-        return 0;
-    }
-
-    length += n;
-#endif
-
-    event->args[1][BOUND(length++ , ARG_LENGTH)] = '}';
-    submit_event(ctx, event);
-
-    return 0;
-}
-
 SEC("uprobe/plugin_open")
 int plugin_open(struct pt_regs *ctx) {
     string path;
@@ -1588,6 +1487,116 @@ int plugin_open(struct pt_regs *ctx) {
     }
 
     submit_event(ctx, event);
+
+    return 0;
+}
+
+SEC("uprobe/net_http_server_handler_serve_http")
+int net_http_server_handler_serve_http(struct pt_regs *ctx) {
+    http_request *ptr;
+
+    if (is_register_based()) {
+        ptr = (http_request *) GO_REGS_PARM4(ctx);
+    } else {
+        if (bpf_probe_read_user(&ptr, sizeof(http_request *), (void *) (PT_REGS_SP(ctx) + sizeof(uintptr_t) * 2 + sizeof(interface))) < 0)
+            return 0;
+    }
+
+    go_probe_request *request = get_request();
+
+    if (!request)
+        return 0;
+
+    string str;
+
+    if (bpf_probe_read_user(&str, sizeof(string), &ptr->method) < 0)
+        return 0;
+
+    if (stringify_string(&str, request->method, SHORT_ARG_LENGTH) < 0)
+        return 0;
+
+    if (bpf_probe_read_user(&str, sizeof(string), &ptr->request_uri) < 0)
+        return 0;
+
+    if (stringify_string(&str, request->uri, ARG_LENGTH) < 0)
+        return 0;
+
+    if (bpf_probe_read_user(&str, sizeof(string), &ptr->host) < 0)
+        return 0;
+
+    if (stringify_string(&str, request->host, SHORT_ARG_LENGTH) < 0)
+        return 0;
+
+    if (bpf_probe_read_user(&str, sizeof(string), &ptr->remote_address) < 0)
+        return 0;
+
+    if (stringify_string(&str, request->remote, SHORT_ARG_LENGTH) < 0)
+        return 0;
+
+    map *m;
+
+    if (bpf_probe_read_user(&m, sizeof(map *), &ptr->header) < 0)
+        return 0;
+
+    map header;
+
+    if (bpf_probe_read_user(&header, sizeof(map), m) < 0)
+        return 0;
+
+    uintptr_t g = get_g(ctx);
+
+    if (header.flags & MAP_WRITING_FLAG || header.old_buckets) {
+        bpf_map_update_elem(&request_map, &g, request, BPF_ANY);
+        return 0;
+    }
+
+    size_t count = 0;
+
+    UNROLL_LOOP
+    for (int i = 0; i < MAP_MAX_COUNT; i++) {
+        if (i >= (2 ^ header.B) || count >= header.count || count >= HEADER_COUNT)
+            break;
+
+        char b[sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice)];
+
+        if (bpf_probe_read_user(
+                b,
+                sizeof(b),
+                (char *) header.buckets + i * (sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice))
+        ) < 0)
+            return 0;
+
+        UNROLL_LOOP
+        for (int j = 0; j < MAP_BUCKET_MAX_COUNT; j++) {
+            if (((bucket *) b)->top_bits[j] < MAP_MIN_TOP_HASH) {
+                if (!((bucket *) b)->top_bits[j])
+                    break;
+
+                continue;
+            }
+
+            if (stringify_string(
+                    (string *) (((bucket *) b)->keys + j * sizeof(string)),
+                    request->headers[count][0],
+                    SHORT_ARG_LENGTH
+            ) < 0)
+                return 0;
+
+            if (stringify_string_slice(
+                    (slice *) (((bucket *) b)->keys + 8 * sizeof(string) + j * sizeof(slice)),
+                    request->headers[count][1],
+                    SHORT_ARG_LENGTH
+            ) < 0)
+                return 0;
+
+            count++;
+        }
+    }
+
+    if (count < HEADER_COUNT)
+        request->headers[count][0][0] = 0;
+
+    bpf_map_update_elem(&request_map, &g, request, BPF_ANY);
 
     return 0;
 }

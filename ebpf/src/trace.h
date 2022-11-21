@@ -14,6 +14,20 @@ struct {
     __type(value, int);
 } frame_map SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 8192);
+    __type(key, uintptr_t);
+    __type(value, go_probe_request);
+} request_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __type(key, __u32);
+    __uint(value_size, sizeof(go_probe_event));
+    __uint(max_entries, 1);
+} cache SEC(".maps");
+
 #ifdef USE_RING_BUFFER
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -21,18 +35,25 @@ struct {
 } events SEC(".maps");
 #else
 struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __type(key, __u32);
-    __type(value, go_probe_event);
-    __uint(max_entries, 1);
-} cache SEC(".maps");
-
-struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
     __uint(key_size, sizeof(__u32));
     __uint(value_size, sizeof(__u32));
 } events SEC(".maps");
 #endif
+
+static __always_inline uintptr_t get_g(struct pt_regs *ctx) {
+    uintptr_t g = GO_REGS_ABI_0_G(ctx);
+
+    if (is_register_based())
+        g = GO_REGS_G(ctx);
+
+    return g;
+}
+
+static __always_inline go_probe_request *get_request() {
+    __u32 index = 0;
+    return bpf_map_lookup_elem(&cache, &index);
+}
 
 static __always_inline int traceback_with_fp(struct pt_regs *ctx, go_probe_event *event) {
     if (bpf_probe_read_user(event->stack_trace, sizeof(uintptr_t), (void *) PT_REGS_RET(ctx)) < 0)
@@ -105,6 +126,12 @@ static __always_inline go_probe_event *new_event(int class_id, int method_id, in
     for (int i = 0; i < count; i++)
         event->args[i][0] = 0;
 
+    event->request.method[0] = 0;
+    event->request.uri[0] = 0;
+    event->request.host[0] = 0;
+    event->request.remote[0] = 0;
+    event->request.headers[0][0][0] = 0;
+
     return event;
 }
 
@@ -119,6 +146,13 @@ static __always_inline void submit_event(struct pt_regs *ctx, go_probe_event *ev
         free_event(event);
         return;
     }
+
+    uintptr_t g = get_g(ctx);
+
+    go_probe_request *request = bpf_map_lookup_elem(&request_map, &g);
+
+    if (request)
+        __builtin_memcpy(&event->request, request, sizeof(go_probe_request));
 
 #ifdef USE_RING_BUFFER
     bpf_ringbuf_submit(event, 0);
