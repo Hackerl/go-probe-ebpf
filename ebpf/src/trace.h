@@ -26,7 +26,7 @@ struct {
 #if ENABLE_HTTP || !USE_RING_BUFFER
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __type(key, __u32);
+    __uint(key_size, sizeof(__u32));
     __uint(value_size, 4096);
     __uint(max_entries, 1);
 } cache SEC(".maps");
