@@ -14,19 +14,23 @@ struct {
     __type(value, int);
 } frame_map SEC(".maps");
 
+#ifdef ENABLE_HTTP
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 8192);
     __type(key, uintptr_t);
     __type(value, go_probe_request);
 } request_map SEC(".maps");
+#endif
 
+#if ENABLE_HTTP || !USE_RING_BUFFER
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __type(key, __u32);
-    __uint(value_size, sizeof(go_probe_event));
+    __uint(value_size, 4096);
     __uint(max_entries, 1);
 } cache SEC(".maps");
+#endif
 
 #ifdef USE_RING_BUFFER
 struct {
@@ -50,7 +54,7 @@ static __always_inline uintptr_t get_g(struct pt_regs *ctx) {
     return g;
 }
 
-static __always_inline go_probe_request *get_request() {
+static __always_inline void *get_cache() {
     __u32 index = 0;
     return bpf_map_lookup_elem(&cache, &index);
 }
@@ -111,8 +115,7 @@ static __always_inline go_probe_event *new_event(int class_id, int method_id, in
 #ifdef USE_RING_BUFFER
     go_probe_event *event = bpf_ringbuf_reserve(&events, sizeof(go_probe_event), 0);
 #else
-    __u32 index = 0;
-    go_probe_event *event = bpf_map_lookup_elem(&cache, &index);
+    go_probe_event *event = get_cache();
 #endif
     if (!event)
         return NULL;
@@ -126,11 +129,13 @@ static __always_inline go_probe_event *new_event(int class_id, int method_id, in
     for (int i = 0; i < count; i++)
         event->args[i][0] = 0;
 
+#ifdef ENABLE_HTTP
     event->request.method[0] = 0;
     event->request.uri[0] = 0;
     event->request.host[0] = 0;
     event->request.remote[0] = 0;
     event->request.headers[0][0][0] = 0;
+#endif
 
     return event;
 }
@@ -147,12 +152,16 @@ static __always_inline void submit_event(struct pt_regs *ctx, go_probe_event *ev
         return;
     }
 
+#ifdef ENABLE_HTTP
     uintptr_t g = get_g(ctx);
 
     go_probe_request *request = bpf_map_lookup_elem(&request_map, &g);
 
     if (request)
         __builtin_memcpy(&event->request, request, sizeof(go_probe_request));
+
+    event->g = g;
+#endif
 
 #ifdef USE_RING_BUFFER
     bpf_ringbuf_submit(event, 0);

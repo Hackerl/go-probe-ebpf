@@ -91,6 +91,13 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
         bpf_map__update_elem(map, &pc, sizeof(pc), &frame_size, sizeof(frame_size), BPF_NOEXIST);
     }
 
+    LOG_INFO(
+            "args: %s stack trace: %s",
+            zero::strings::join(args, " ").c_str(),
+            zero::strings::join(stackTrace, " ").c_str()
+    );
+
+#ifdef ENABLE_HTTP
     std::list<std::string> headers;
 
     for (const auto &header : event->request.headers) {
@@ -101,17 +108,14 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
     }
 
     LOG_INFO(
-            "request: method{%s} uri{%s} host{%s} remote{%s} headers{%s}"
-            "args: %s "
-            "stack trace: %s",
+            "g: %p request: method{%s} uri{%s} host{%s} remote{%s} headers{%s}"
+            event->g,
             event->request.method,
             event->request.uri,
             event->request.host,
-            event->request.remote,
-            zero::strings::join(headers, " ").c_str(),
-            zero::strings::join(args, " ").c_str(),
-            zero::strings::join(stackTrace, " ").c_str()
+            event->request.remote
     );
+#endif
 
 #ifdef USE_RING_BUFFER
     return 0;

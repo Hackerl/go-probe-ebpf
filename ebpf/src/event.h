@@ -22,7 +22,10 @@ typedef struct {
     int count;
     int class_id;
     int method_id;
+#ifdef ENABLE_HTTP
+    uintptr_t g;
     go_probe_request request;
+#endif
     char args[ARG_COUNT][ARG_LENGTH];
     uintptr_t stack_trace[TRACE_COUNT];
 } go_probe_event;

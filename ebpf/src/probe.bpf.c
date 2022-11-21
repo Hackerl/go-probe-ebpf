@@ -1491,6 +1491,7 @@ int plugin_open(struct pt_regs *ctx) {
     return 0;
 }
 
+#ifdef ENABLE_HTTP
 SEC("uprobe/net_http_server_handler_serve_http")
 int net_http_server_handler_serve_http(struct pt_regs *ctx) {
     http_request *ptr;
@@ -1502,7 +1503,7 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
             return 0;
     }
 
-    go_probe_request *request = get_request();
+    go_probe_request *request = get_cache();
 
     if (!request)
         return 0;
@@ -1550,7 +1551,7 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
         return 0;
     }
 
-    size_t count = 0;
+    volatile size_t count = 0;
 
     UNROLL_LOOP
     for (int i = 0; i < MAP_MAX_COUNT; i++) {
@@ -1564,39 +1565,39 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
                 sizeof(b),
                 (char *) header.buckets + i * (sizeof(bucket) + 8 * sizeof(string) + 8 * sizeof(slice))
         ) < 0)
-            return 0;
+            break;
 
         UNROLL_LOOP
         for (int j = 0; j < MAP_BUCKET_MAX_COUNT; j++) {
-            if (((bucket *) b)->top_bits[j] < MAP_MIN_TOP_HASH) {
-                if (!((bucket *) b)->top_bits[j])
-                    break;
+            if (!((bucket *) b)->top_bits[j])
+                break;
 
+            if (((bucket *) b)->top_bits[j] < MAP_MIN_TOP_HASH)
                 continue;
-            }
 
             if (stringify_string(
                     (string *) (((bucket *) b)->keys + j * sizeof(string)),
-                    request->headers[count][0],
+                    request->headers[BOUND(count, HEADER_COUNT)][0],
                     SHORT_ARG_LENGTH
             ) < 0)
-                return 0;
+                break;
 
             if (stringify_string_slice(
                     (slice *) (((bucket *) b)->keys + 8 * sizeof(string) + j * sizeof(slice)),
-                    request->headers[count][1],
+                    request->headers[BOUND(count, HEADER_COUNT)][1],
                     SHORT_ARG_LENGTH
             ) < 0)
-                return 0;
+                break;
 
             count++;
         }
     }
 
     if (count < HEADER_COUNT)
-        request->headers[count][0][0] = 0;
+        request->headers[BOUND(count, HEADER_COUNT)][0][0] = 0;
 
     bpf_map_update_elem(&request_map, &g, request, BPF_ANY);
 
     return 0;
 }
+#endif
