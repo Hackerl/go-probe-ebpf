@@ -126,7 +126,7 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
 #endif
 }
 
-std::optional<int> getAPIOffset(const go::symbol::Reader &reader, uint64_t address) {
+std::optional<int> getAPIOffset(const elf::Reader &reader, uint64_t address) {
     std::optional<std::vector<std::byte>> buffer = reader.readVirtualMemory(address, INSTRUCTION_BUFFER_SIZE);
 
     if (!buffer)

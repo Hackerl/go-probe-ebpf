@@ -210,11 +210,23 @@ constexpr auto GOLANG_API = {
                 "net_http_new_request_with_context",
                 false
         },
+#ifdef ENABLE_HTTP
         {
                 "net/http.serverHandler.ServeHTTP",
-                "net_http_server_handler_serve_http",
+                "on_request",
                 false
         },
+        {
+                "net/http.(*response).finishRequest",
+                "on_request_finished",
+                false
+        },
+        {
+                "net/http.(*response).Hijack",
+                "on_request_finished",
+                false
+        },
+#endif
         {
                 "plugin.Open",
                 "plugin_open",

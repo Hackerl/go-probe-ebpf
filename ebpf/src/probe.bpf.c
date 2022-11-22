@@ -1492,8 +1492,8 @@ int plugin_open(struct pt_regs *ctx) {
 }
 
 #ifdef ENABLE_HTTP
-SEC("uprobe/net_http_server_handler_serve_http")
-int net_http_server_handler_serve_http(struct pt_regs *ctx) {
+SEC("uprobe/on_request")
+int on_request(struct pt_regs *ctx) {
     http_request *ptr;
 
     if (is_register_based()) {
@@ -1599,6 +1599,14 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
 #endif
 
     bpf_map_update_elem(&request_map, &g, request, BPF_ANY);
+
+    return 0;
+}
+
+SEC("uprobe/on_request_finished")
+int on_request_finished(struct pt_regs *ctx) {
+    uintptr_t g = get_g(ctx);
+    bpf_map_delete_elem(&request_map, &g);
 
     return 0;
 }
