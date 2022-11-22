@@ -102,11 +102,9 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
     }
 
     LOG_INFO(
-            "g: %p "
             "request: method{%s} uri{%s} host{%s} remote{%s} headers{%s} "
             "args: %s "
             "stack trace: %s",
-            event->g,
             event->request.method,
             event->request.uri,
             event->request.host,
@@ -203,10 +201,10 @@ int main(int argc, char **argv) {
     libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
     libbpf_set_print(onLog);
 
-    probe_bpf *skeleton = probe_bpf::open_and_load();
+    probe_bpf *skeleton = probe_bpf::open();
 
     if (!skeleton) {
-        LOG_ERROR("failed to open and load BPF skeleton");
+        LOG_ERROR("failed to open BPF skeleton");
         return -1;
     }
 
@@ -232,11 +230,27 @@ int main(int argc, char **argv) {
             fp = major > 1 || (major == 1 && minor >= 7) ? 1 : 0;
     }
 
+#ifdef BPF_NO_GLOBAL_DATA
+    if (probe_bpf::load(skeleton)) {
+        LOG_ERROR("failed to load and verify BPF skeleton");
+        probe_bpf::destroy(skeleton);
+        return -1;
+    }
+#endif
+
     if (abi >= 0)
         SET_CONFIG(skeleton, REGISTER_BASED, abi)
 
     if (fp >= 0)
         SET_CONFIG(skeleton, FRAME_POINTER, fp)
+
+#ifndef BPF_NO_GLOBAL_DATA
+    if (probe_bpf::load(skeleton)) {
+        LOG_ERROR("failed to load and verify BPF skeleton");
+        probe_bpf::destroy(skeleton);
+        return -1;
+    }
+#endif
 
     std::optional<zero::os::process::ProcessMapping> processMapping = zero::os::process::getImageBase(
             pid,

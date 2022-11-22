@@ -23,15 +23,6 @@ struct {
 } request_map SEC(".maps");
 #endif
 
-#if ENABLE_HTTP || !USE_RING_BUFFER
-struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(key_size, sizeof(__u32));
-    __uint(value_size, 4096);
-    __uint(max_entries, 1);
-} cache SEC(".maps");
-#endif
-
 #ifdef USE_RING_BUFFER
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -45,6 +36,20 @@ struct {
 } events SEC(".maps");
 #endif
 
+#if ENABLE_HTTP || !USE_RING_BUFFER
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(key_size, sizeof(__u32));
+    __uint(value_size, 4096);
+    __uint(max_entries, 1);
+} cache SEC(".maps");
+
+static __always_inline void *get_cache() {
+    __u32 index = 0;
+    return bpf_map_lookup_elem(&cache, &index);
+}
+#endif
+
 static __always_inline uintptr_t get_g(struct pt_regs *ctx) {
     uintptr_t g = GO_REGS_ABI_0_G(ctx);
 
@@ -52,11 +57,6 @@ static __always_inline uintptr_t get_g(struct pt_regs *ctx) {
         g = GO_REGS_G(ctx);
 
     return g;
-}
-
-static __always_inline void *get_cache() {
-    __u32 index = 0;
-    return bpf_map_lookup_elem(&cache, &index);
 }
 
 static __always_inline int traceback_with_fp(struct pt_regs *ctx, go_probe_event *event) {
@@ -159,8 +159,6 @@ static __always_inline void submit_event(struct pt_regs *ctx, go_probe_event *ev
 
     if (request)
         __builtin_memcpy(&event->request, request, sizeof(go_probe_request));
-
-    event->g = g;
 #endif
 
 #ifdef USE_RING_BUFFER
