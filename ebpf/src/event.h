@@ -14,7 +14,9 @@ typedef struct {
     char uri[ARG_LENGTH];
     char host[SHORT_ARG_LENGTH];
     char remote[SHORT_ARG_LENGTH];
+#ifndef DISABLE_HTTP_HEADER
     char headers[HEADER_COUNT][2][SHORT_ARG_LENGTH];
+#endif
 } go_probe_request;
 
 typedef struct {

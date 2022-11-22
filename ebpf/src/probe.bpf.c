@@ -1534,6 +1534,9 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
     if (stringify_string(&str, request->remote, SHORT_ARG_LENGTH) < 0)
         return 0;
 
+    uintptr_t g = get_g(ctx);
+
+#ifndef DISABLE_HTTP_HEADER
     map *m;
 
     if (bpf_probe_read_user(&m, sizeof(map *), &ptr->header) < 0)
@@ -1543,8 +1546,6 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
 
     if (bpf_probe_read_user(&header, sizeof(map), m) < 0)
         return 0;
-
-    uintptr_t g = get_g(ctx);
 
     if (header.flags & MAP_WRITING_FLAG || header.old_buckets) {
         bpf_map_update_elem(&request_map, &g, request, BPF_ANY);
@@ -1595,6 +1596,7 @@ int net_http_server_handler_serve_http(struct pt_regs *ctx) {
 
     if (count < HEADER_COUNT)
         request->headers[BOUND(count, HEADER_COUNT)][0][0] = 0;
+#endif
 
     bpf_map_update_elem(&request_map, &g, request, BPF_ANY);
 

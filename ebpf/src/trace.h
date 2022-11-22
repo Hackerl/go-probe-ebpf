@@ -51,7 +51,7 @@ static __always_inline void *get_cache() {
 #endif
 
 static __always_inline uintptr_t get_g(struct pt_regs *ctx) {
-    uintptr_t g = GO_REGS_ABI_0_G(ctx);
+    volatile uintptr_t g = GO_REGS_ABI_0_G(ctx);
 
     if (is_register_based())
         g = GO_REGS_G(ctx);
@@ -134,7 +134,9 @@ static __always_inline go_probe_event *new_event(int class_id, int method_id, in
     event->request.uri[0] = 0;
     event->request.host[0] = 0;
     event->request.remote[0] = 0;
+#ifndef DISABLE_HTTP_HEADER
     event->request.headers[0][0][0] = 0;
+#endif
 #endif
 
     return event;
