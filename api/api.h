@@ -10,7 +10,7 @@ struct API {
 };
 
 constexpr auto GOLANG_API = {
-        API {
+        API{
                 "os/exec.Command",
                 "os_exec_command",
                 false
@@ -210,8 +210,15 @@ constexpr auto GOLANG_API = {
                 "net_http_new_request_with_context",
                 false
         },
-#ifdef ENABLE_HTTP
         {
+                "plugin.Open",
+                "plugin_open",
+                false
+        }
+};
+
+constexpr auto GOLANG_HTTP_API = {
+        API{
                 "net/http.serverHandler.ServeHTTP",
                 "on_request",
                 false
@@ -224,12 +231,6 @@ constexpr auto GOLANG_API = {
         {
                 "net/http.(*response).Hijack",
                 "on_request_finished",
-                false
-        },
-#endif
-        {
-                "plugin.Open",
-                "plugin_open",
                 false
         }
 };

@@ -12,6 +12,10 @@
 constexpr auto MAX_OFFSET = 100;
 constexpr auto INSTRUCTION_BUFFER_SIZE = 128;
 
+constexpr auto TRACK_HTTP_VERSION = go::symbol::Version{1, 12};
+constexpr auto REGISTER_BASED_VERSION = go::symbol::Version{1, 17};
+constexpr auto FRAME_POINTER_VERSION = go::symbol::Version{1, 7};
+
 int onLog(libbpf_print_level level, const char *format, va_list args) {
     va_list copy;
     va_copy(copy, args);
@@ -173,6 +177,7 @@ int main(int argc, char **argv) {
 
     cmdline.addOptional<int>("fp", '\0', "traceback with frame pointer", -1);
     cmdline.addOptional<int>("abi", '\0', "specify golang calling conventions[stack(0)|register(1)]", -1);
+    cmdline.addOptional<int>("http", '\0', "enable http request tracking", -1);
 
     cmdline.parse(argc, argv);
 
@@ -180,6 +185,7 @@ int main(int argc, char **argv) {
 
     int fp = cmdline.getOptional<int>("fp");
     int abi = cmdline.getOptional<int>("abi");
+    int http = cmdline.getOptional<int>("http");
 
     std::error_code ec;
 
@@ -211,24 +217,19 @@ int main(int argc, char **argv) {
     std::optional<go::symbol::Version> version = reader.version();
 
     if (version) {
-        std::optional<std::tuple<int, int>> versionNumber = version->number();
-
-        if (!versionNumber) {
-            LOG_ERROR("get golang version number failed: %s", version->string().c_str());
-            probe_bpf::destroy(skeleton);
-            return -1;
-        }
-
-        auto [major, minor] = *versionNumber;
-
-        LOG_INFO("golang version: %d.%d", major, minor);
+        LOG_INFO("golang version: %d.%d", version->major, version->minor);
 
         if (abi < 0)
-            abi = major > 1 || (major == 1 && minor >= 17) ? 1 : 0;
+            abi = *version >= REGISTER_BASED_VERSION;
 
         if (fp < 0)
-            fp = major > 1 || (major == 1 && minor >= 7) ? 1 : 0;
+            fp = *version >= FRAME_POINTER_VERSION;
+
+        if (http < 0)
+            http = *version >= TRACK_HTTP_VERSION;
     }
+
+    LOG_INFO("config: abi(%d) fp(%d) http(%d)", abi, fp, http);
 
 #ifdef BPF_NO_GLOBAL_DATA
     if (probe_bpf::load(skeleton)) {
@@ -273,7 +274,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    for (const auto &api: GOLANG_API) {
+    auto attach = [&](const auto &api) {
         auto it = std::find_if(symbolTable->begin(), symbolTable->end(), [&](const auto &entry) {
             const char *name = entry.symbol().name();
 
@@ -285,7 +286,7 @@ int main(int argc, char **argv) {
 
         if (it == symbolTable->end()) {
             LOG_WARNING("function %s not found", api.name);
-            continue;
+            return;
         }
 
         auto program = std::find_if(skeleton->skeleton->progs, skeleton->skeleton->progs + skeleton->skeleton->prog_cnt, [&](const auto &program) {
@@ -294,7 +295,7 @@ int main(int argc, char **argv) {
 
         if (program == skeleton->skeleton->progs + skeleton->skeleton->prog_cnt) {
             LOG_WARNING("probe %s not found", api.probe);
-            continue;
+            return;
         }
 
         uint64_t entry = it.operator*().symbol().entry();
@@ -303,7 +304,7 @@ int main(int argc, char **argv) {
 
         if (!offset) {
             LOG_ERROR("get api offset failed");
-            continue;
+            return;
         }
 
         LOG_INFO("attach function %s: %p+%d", api.name, entry, offset);
@@ -318,9 +319,14 @@ int main(int argc, char **argv) {
 
         if (!*program->link) {
             LOG_ERROR("failed to attach: %s", strerror(errno));
-            continue;
+            return;
         }
-    }
+    };
+
+    std::for_each(GOLANG_API.begin(), GOLANG_API.end(), attach);
+
+    if (http > 0)
+        std::for_each(GOLANG_HTTP_API.begin(), GOLANG_HTTP_API.end(), attach);
 
     std::pair<bpf_map *, go::symbol::SymbolTable &> context = {
             fp != 1 ? skeleton->maps.frame_map : nullptr,
