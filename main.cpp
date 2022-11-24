@@ -7,6 +7,7 @@
 #include <zero/log.h>
 #include <zero/cmdline.h>
 #include <zero/os/process.h>
+#include <aio/ev/event.h>
 #include <go/symbol/reader.h>
 
 constexpr auto MAX_OFFSET = 100;
@@ -328,13 +329,22 @@ int main(int argc, char **argv) {
     if (http > 0)
         std::for_each(GOLANG_HTTP_API.begin(), GOLANG_HTTP_API.end(), attach);
 
-    std::pair<bpf_map *, go::symbol::SymbolTable &> context = {
+    event_base *base = event_base_new();
+
+    if (!base) {
+        probe_bpf::destroy(skeleton);
+        return -1;
+    }
+
+    aio::Context context = {base};
+
+    std::pair<bpf_map *, go::symbol::SymbolTable &> ctx = {
             fp != 1 ? skeleton->maps.frame_map : nullptr,
             *symbolTable
     };
 
 #ifdef USE_RING_BUFFER
-    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.events), onEvent, &context, nullptr);
+    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.events), onEvent, &ctx, nullptr);
 
     if (!rb) {
         LOG_ERROR("failed to create ring buffer: %s", strerror(errno));
@@ -342,13 +352,12 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    while (ring_buffer__poll(rb, 100) >= 0) {
-
-    }
-
-    ring_buffer__free(rb);
+    std::make_shared<aio::ev::Event>(context, ring_buffer__epoll_fd(rb))->onPersist(EV_READ, [=](short what) {
+        ring_buffer__poll(rb, 0);
+        return true;
+    });
 #else
-    perf_buffer *pb = perf_buffer__new(bpf_map__fd(skeleton->maps.events), 64, onEvent, nullptr, &context, nullptr);
+    perf_buffer *pb = perf_buffer__new(bpf_map__fd(skeleton->maps.events), 64, onEvent, nullptr, &ctx, nullptr);
 
     if (!pb) {
         LOG_ERROR("failed to create perf buffer: %s", strerror(errno));
@@ -356,10 +365,20 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    while (perf_buffer__poll(pb, 100) >= 0) {
-
+    for (size_t i = 0; i < perf_buffer__buffer_cnt(pb); i++) {
+        std::make_shared<aio::ev::Event>(context, perf_buffer__buffer_fd(pb, i))->onPersist(EV_READ, [=](short what) {
+            perf_buffer__consume_buffer(pb, i);
+            return true;
+        });
     }
+#endif
 
+    event_base_dispatch(base);
+    event_base_free(base);
+
+#ifdef USE_RING_BUFFER
+    ring_buffer__free(rb);
+#else
     perf_buffer__free(pb);
 #endif
 

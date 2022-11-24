@@ -12,16 +12,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/lib)
 
-set(EVENT__LIBRARY_TYPE STATIC CACHE STRING "disable shared library")
-set(EVENT__DISABLE_TESTS ON CACHE BOOL "disable event tests")
-set(EVENT__DISABLE_SAMPLES ON CACHE BOOL "disable event samples")
-set(EVENT__DISABLE_OPENSSL ON CACHE BOOL "disable event openssl")
-set(EVENT__DISABLE_BENCHMARK ON CACHE BOOL "disable event benchmark")
-
 set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "disable disassembler tools")
 set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "disable disassembler examples")
-
-set(JSON_BuildTests OFF CACHE BOOL "disable json library tests")
 
 include(FetchContent)
 
@@ -34,20 +26,12 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(go-symbol)
 
 FetchContent_Declare(
-        json
-        GIT_REPOSITORY https://github.com/nlohmann/json
-        GIT_TAG v3.11.2
+        aio
+        GIT_REPOSITORY https://github.com/Hackerl/aio
+        GIT_TAG 3eb76a12873d1ba4c5203560995257de3dfdb3ca
 )
 
-FetchContent_MakeAvailable(json)
-
-FetchContent_Declare(
-        libevent
-        GIT_REPOSITORY https://github.com/libevent/libevent
-        GIT_TAG release-2.1.12-stable
-)
-
-FetchContent_MakeAvailable(libevent)
+FetchContent_MakeAvailable(aio)
 
 FetchContent_Declare(
         zydis
@@ -68,10 +52,8 @@ add_executable(go_probe_ebpf main.cpp)
 target_link_libraries(
         go_probe_ebpf
         go_symbol
+        aio
         Zydis
-        nlohmann_json
-        event_core_static
-        event_pthreads_static
         PkgConfig::libbpf
         PkgConfig::zlib
         PkgConfig::libelf
