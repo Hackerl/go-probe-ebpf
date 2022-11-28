@@ -18,20 +18,20 @@ set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "disable disassembler examples")
 include(FetchContent)
 
 FetchContent_Declare(
+        aio
+        GIT_REPOSITORY https://github.com/Hackerl/aio
+        GIT_TAG 651f4efd914e20dfdfe8db1eafd77a93ee6910d4
+)
+
+FetchContent_MakeAvailable(aio)
+
+FetchContent_Declare(
         go-symbol
         GIT_REPOSITORY https://github.com/Hackerl/go-symbol
         GIT_TAG 2e7a5bf6739aac1044fec1b66b94526ff580747d
 )
 
 FetchContent_MakeAvailable(go-symbol)
-
-FetchContent_Declare(
-        aio
-        GIT_REPOSITORY https://github.com/Hackerl/aio
-        GIT_TAG 3eb76a12873d1ba4c5203560995257de3dfdb3ca
-)
-
-FetchContent_MakeAvailable(aio)
 
 FetchContent_Declare(
         zydis
@@ -47,7 +47,12 @@ pkg_check_modules(zlib REQUIRED IMPORTED_TARGET zlib)
 pkg_check_modules(libelf REQUIRED IMPORTED_TARGET libelf)
 pkg_check_modules(libbpf REQUIRED IMPORTED_TARGET libbpf)
 
-add_executable(go_probe_ebpf main.cpp)
+add_executable(
+        go_probe_ebpf
+        main.cpp
+        client/smith_message.cpp
+        client/smith_probe.cpp
+)
 
 target_link_libraries(
         go_probe_ebpf

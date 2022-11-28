@@ -1,5 +1,6 @@
 #include "api/api.h"
 #include "api/config.h"
+#include "client/smith_probe.h"
 #include "ebpf/src/event.h"
 #include "ebpf/probe.skel.h"
 #include <bpf/bpf.h>
@@ -51,15 +52,12 @@ int onEvent(void *ctx, void *data, size_t size) {
 void onEvent(void *ctx, int cpu, void *data, __u32 size) {
 #endif
     auto event = (go_probe_event *) data;
-    auto &[map, symbolTable] = *(std::pair<bpf_map *, go::symbol::SymbolTable &> *) ctx;
+    auto &[map, symbolTable, probe] = *(std::tuple<bpf_map *, go::symbol::SymbolTable &, SmithProbe &> *) ctx;
 
-    LOG_INFO("pid: %d class: %d method: %d", event->pid, event->class_id, event->method_id);
-
-    std::list<std::string> args;
-    std::list<std::string> stackTrace;
+    Trace trace;
 
     for (int i = 0; i < event->count; i++)
-        args.emplace_back(event->args[i]);
+        trace.args.emplace_back(event->args[i]);
 
     for (int i = 0; i < TRACE_COUNT; i++) {
         uintptr_t pc = event->stack_trace[i];
@@ -83,7 +81,7 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
                  pc - symbol.entry()
         );
 
-        stackTrace.emplace_back(stack);
+        trace.stackTrace.emplace_back(stack);
 
         if (!map || i == TRACE_COUNT - 1 || event->stack_trace[i + 1] || symbol.isStackTop())
             continue;
@@ -97,34 +95,20 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
     }
 
 #ifdef ENABLE_HTTP
-    std::list<std::string> headers;
+    trace.request.method = event->request.method;
+    trace.request.uri = event->request.uri;
+    trace.request.host = event->request.host;
+    trace.request.remote = event->request.remote;
 
     for (const auto &header : event->request.headers) {
         if (!header[0][0])
             break;
 
-        headers.push_back(zero::strings::format("%s: %s", header[0], header[1]));
+        trace.request.headers.insert({header[0], header[1]});
     }
-
-    LOG_INFO(
-            "request: method{%s} uri{%s} host{%s} remote{%s} headers{%s} "
-            "args: %s "
-            "stack trace: %s",
-            event->request.method,
-            event->request.uri,
-            event->request.host,
-            event->request.remote,
-            zero::strings::join(headers, " ").c_str(),
-            zero::strings::join(args, " ").c_str(),
-            zero::strings::join(stackTrace, " ").c_str()
-    );
-#else
-    LOG_INFO(
-            "args: %s stack trace: %s",
-            zero::strings::join(args, " ").c_str(),
-            zero::strings::join(stackTrace, " ").c_str()
-    );
 #endif
+
+    probe.write(trace);
 
 #ifdef USE_RING_BUFFER
     return 0;
@@ -267,7 +251,7 @@ int main(int argc, char **argv) {
 
     LOG_INFO("image base: %p", processMapping->start);
 
-    std::optional<go::symbol::SymbolTable> symbolTable = reader.symbols(go::symbol::AnonymousMemory, processMapping->start);
+    std::optional<go::symbol::SymbolTable> symbolTable = reader.symbols(go::symbol::FileMapping, processMapping->start);
 
     if (!symbolTable) {
         LOG_INFO("get symbol table failed");
@@ -338,9 +322,12 @@ int main(int argc, char **argv) {
 
     aio::Context context = {base};
 
-    std::pair<bpf_map *, go::symbol::SymbolTable &> ctx = {
+    SmithProbe probe(context);
+
+    std::tuple<bpf_map *, go::symbol::SymbolTable &, SmithProbe &> ctx = {
             fp != 1 ? skeleton->maps.frame_map : nullptr,
-            *symbolTable
+            *symbolTable,
+            probe
     };
 
 #ifdef USE_RING_BUFFER
@@ -348,6 +335,7 @@ int main(int argc, char **argv) {
 
     if (!rb) {
         LOG_ERROR("failed to create ring buffer: %s", strerror(errno));
+        event_base_free(base);
         probe_bpf::destroy(skeleton);
         return -1;
     }
@@ -361,6 +349,7 @@ int main(int argc, char **argv) {
 
     if (!pb) {
         LOG_ERROR("failed to create perf buffer: %s", strerror(errno));
+        event_base_free(base);
         probe_bpf::destroy(skeleton);
         return -1;
     }
