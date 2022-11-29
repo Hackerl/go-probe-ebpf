@@ -8,10 +8,15 @@
 #include "config.h"
 
 #ifdef ENABLE_HTTP
+typedef struct {
+    pid_t pid;
+    uintptr_t g;
+} goroutine;
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 8192);
-    __type(key, uintptr_t);
+    __type(key, goroutine);
     __type(value, go_probe_request);
 } request_map SEC(".maps");
 #endif
@@ -124,7 +129,10 @@ static __always_inline void submit_event(struct pt_regs *ctx, go_probe_event *ev
     }
 
 #ifdef ENABLE_HTTP
-    uintptr_t g = get_g(ctx, event->pid);
+    goroutine g = {0, 0};
+
+    g.pid = event->pid;
+    g.g = get_g(ctx, event->pid);
 
     go_probe_request *request = bpf_map_lookup_elem(&request_map, &g);
 

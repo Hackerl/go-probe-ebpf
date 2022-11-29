@@ -1618,7 +1618,10 @@ int on_request(struct pt_regs *ctx) {
     if (stringify_string(&str, request->remote, SHORT_ARG_LENGTH) < 0)
         return 0;
 
-    uintptr_t g = get_g(ctx, pid);
+    goroutine g = {0, 0};
+
+    g.pid = pid;
+    g.g = get_g(ctx, pid);
 
 #ifndef DISABLE_HTTP_HEADER
     map *m;
@@ -1689,7 +1692,13 @@ int on_request(struct pt_regs *ctx) {
 
 SEC("uprobe/on_request_finished")
 int on_request_finished(struct pt_regs *ctx) {
-    uintptr_t g = get_g(ctx, (pid_t) (bpf_get_current_pid_tgid() >> 32));
+    pid_t pid = (pid_t) (bpf_get_current_pid_tgid() >> 32);
+
+    goroutine g = {0, 0};
+
+    g.pid = pid;
+    g.g = get_g(ctx, pid);
+
     bpf_map_delete_elem(&request_map, &g);
 
     return 0;

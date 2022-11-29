@@ -365,6 +365,7 @@ int main() {
         while (it != instances.end()) {
             if (kill(it->first, 0) < 0 && errno == ESRCH) {
                 LOG_INFO("clean process %d", it->first);
+                bpf_map__delete_elem(skeleton->maps.config_map, &it->first, sizeof(pid_t), BPF_ANY);
                 it = instances.erase(it);
                 continue;
             }
