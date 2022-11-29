@@ -2,6 +2,7 @@
 #define GO_PROBE_EBPF_EVENT_H
 
 #include <stdint.h>
+#include <sys/types.h>
 
 #define ARG_COUNT 4
 #define ARG_LENGTH 256
@@ -20,7 +21,7 @@ typedef struct {
 } go_probe_request;
 
 typedef struct {
-    int pid;
+    pid_t pid;
     int count;
     int class_id;
     int method_id;

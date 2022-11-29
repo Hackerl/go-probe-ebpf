@@ -1,14 +1,9 @@
 #include "smith_message.h"
-#include <unistd.h>
 
 constexpr auto RUNTIME = "golang";
 constexpr auto PROBE_VERSION = "1.0.0";
 
 void to_json(nlohmann::json &j, const SmithMessage &message) {
-
-}
-
-void to_json(nlohmann::json &j, const SmithMessageEx &message) {
     j = {
             {"pid",             message.pid},
             {"runtime",         RUNTIME},
@@ -21,6 +16,7 @@ void to_json(nlohmann::json &j, const SmithMessageEx &message) {
 }
 
 void from_json(const nlohmann::json &j, SmithMessage &message) {
+    j.at("pid").get_to(message.pid);
     j.at("message_type").get_to(message.operate);
     j.at("data").get_to(message.data);
 }

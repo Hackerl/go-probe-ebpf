@@ -51,7 +51,7 @@ add_executable(
         go_probe_ebpf
         main.cpp
         client/smith_message.cpp
-        client/smith_probe.cpp
+        client/smith_client.cpp
 )
 
 target_link_libraries(

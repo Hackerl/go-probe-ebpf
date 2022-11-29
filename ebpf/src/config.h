@@ -2,51 +2,36 @@
 #define GO_PROBE_EBPF_CONFIG_H
 
 #include <stdbool.h>
-
-#ifdef BPF_NO_GLOBAL_DATA
+#include <sys/types.h>
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 
-#define REGISTER_BASED  0
-#define FRAME_POINTER   1
+#define REGISTER_BASED  0x1
+#define FRAME_POINTER   0x2
 
 struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 2);
-    __type(key, __u32);
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 8192);
+    __type(key, pid_t);
     __type(value, __u64);
 } config_map SEC(".maps");
-#else
-bool register_based = false;
-bool frame_pointer = false;
-#endif
 
-static __always_inline bool is_register_based() {
-#ifdef BPF_NO_GLOBAL_DATA
-    __u32 index = REGISTER_BASED;
-    __u64 *config = bpf_map_lookup_elem(&config_map, &index);
+static __always_inline bool is_register_based(pid_t pid) {
+    __u64 *config = bpf_map_lookup_elem(&config_map, &pid);
 
     if (!config)
         return false;
 
-    return *config;
-#else
-    return register_based;
-#endif
+    return *config & REGISTER_BASED;
 }
 
-static __always_inline bool has_frame_pointer() {
-#ifdef BPF_NO_GLOBAL_DATA
-    __u32 index = FRAME_POINTER;
-    __u64 *config = bpf_map_lookup_elem(&config_map, &index);
+static __always_inline bool has_frame_pointer(pid_t pid) {
+    __u64 *config = bpf_map_lookup_elem(&config_map, &pid);
 
     if (!config)
         return false;
 
-    return *config;
-#else
-    return frame_pointer;
-#endif
+    return *config & FRAME_POINTER;
 }
 
 #endif //GO_PROBE_EBPF_CONFIG_H

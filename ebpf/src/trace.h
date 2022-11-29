@@ -7,13 +7,6 @@
 #include "macro.h"
 #include "config.h"
 
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 8192);
-    __type(key, uintptr_t);
-    __type(value, int);
-} frame_map SEC(".maps");
-
 #ifdef ENABLE_HTTP
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -50,16 +43,16 @@ static __always_inline void *get_cache() {
 }
 #endif
 
-static __always_inline uintptr_t get_g(struct pt_regs *ctx) {
+static __always_inline uintptr_t get_g(struct pt_regs *ctx, pid_t pid) {
     volatile uintptr_t g = GO_REGS_ABI_0_G(ctx);
 
-    if (is_register_based())
+    if (is_register_based(pid))
         g = GO_REGS_G(ctx);
 
     return g;
 }
 
-static __always_inline int traceback_with_fp(struct pt_regs *ctx, go_probe_event *event) {
+static __always_inline int traceback(struct pt_regs *ctx, go_probe_event *event) {
     if (bpf_probe_read_user(event->stack_trace, sizeof(uintptr_t), (void *) PT_REGS_RET(ctx)) < 0)
         return -1;
 
@@ -85,33 +78,7 @@ static __always_inline int traceback_with_fp(struct pt_regs *ctx, go_probe_event
     return 0;
 }
 
-static __always_inline int traceback(struct pt_regs *ctx, go_probe_event *event) {
-    uintptr_t pc;
-    uintptr_t sp = PT_REGS_RET(ctx);
-
-    UNROLL_LOOP
-    for (int i = 0; i < TRACE_COUNT; i++) {
-        if (bpf_probe_read_user(&pc, sizeof(uintptr_t), (void *) sp) < 0)
-            break;
-
-        event->stack_trace[i] = pc;
-
-        int *v = bpf_map_lookup_elem(&frame_map, &pc);
-
-        if (!v) {
-            if (i != TRACE_COUNT - 1)
-                event->stack_trace[i + 1] = 0;
-
-            break;
-        }
-
-        sp += *v + (int) sizeof(uintptr_t);
-    }
-
-    return 0;
-}
-
-static __always_inline go_probe_event *new_event(int class_id, int method_id, int count) {
+static __always_inline go_probe_event *new_event(pid_t pid, int class_id, int method_id, int count) {
 #ifdef USE_RING_BUFFER
     go_probe_event *event = bpf_ringbuf_reserve(&events, sizeof(go_probe_event), 0);
 #else
@@ -120,7 +87,7 @@ static __always_inline go_probe_event *new_event(int class_id, int method_id, in
     if (!event)
         return NULL;
 
-    event->pid = (int) (bpf_get_current_pid_tgid() >> 32);
+    event->pid = pid;
     event->class_id = class_id;
     event->method_id = method_id;
     event->count = count;
@@ -128,6 +95,8 @@ static __always_inline go_probe_event *new_event(int class_id, int method_id, in
     UNROLL_LOOP
     for (int i = 0; i < count; i++)
         event->args[i][0] = 0;
+
+    event->stack_trace[0] = 0;
 
 #ifdef ENABLE_HTTP
     event->request.method[0] = 0;
@@ -149,13 +118,13 @@ static __always_inline void free_event(go_probe_event *event) {
 }
 
 static __always_inline void submit_event(struct pt_regs *ctx, go_probe_event *event) {
-    if ((has_frame_pointer() ? traceback_with_fp(ctx, event) : traceback(ctx, event)) < 0) {
+    if (has_frame_pointer(event->pid) && traceback(ctx, event) < 0) {
         free_event(event);
         return;
     }
 
 #ifdef ENABLE_HTTP
-    uintptr_t g = get_g(ctx);
+    uintptr_t g = get_g(ctx, event->pid);
 
     go_probe_request *request = bpf_map_lookup_elem(&request_map, &g);
 

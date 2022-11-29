@@ -1,22 +1,32 @@
 #include "api/api.h"
-#include "api/config.h"
-#include "client/smith_probe.h"
+#include "client/smith_client.h"
 #include "ebpf/src/event.h"
 #include "ebpf/probe.skel.h"
-#include <bpf/bpf.h>
 #include <Zydis/Zydis.h>
 #include <zero/log.h>
-#include <zero/cmdline.h>
 #include <zero/os/process.h>
-#include <aio/ev/event.h>
+#include <aio/ev/timer.h>
+#include <aio/ev/buffer.h>
 #include <go/symbol/reader.h>
+#include <unistd.h>
+#include <csignal>
 
 constexpr auto MAX_OFFSET = 100;
 constexpr auto INSTRUCTION_BUFFER_SIZE = 128;
 
+constexpr auto REGISTER_BASED = 0x1;
+constexpr auto FRAME_POINTER = 0x2;
+
 constexpr auto TRACK_HTTP_VERSION = go::symbol::Version{1, 12};
 constexpr auto REGISTER_BASED_VERSION = go::symbol::Version{1, 17};
 constexpr auto FRAME_POINTER_VERSION = go::symbol::Version{1, 7};
+
+struct Instance {
+    std::string version;
+    go::symbol::SymbolTable symbolTable;
+    std::list<std::unique_ptr<bpf_link, decltype(bpf_link__destroy) *>> links;
+    std::map<std::tuple<int, int>, Filter> filters;
+};
 
 int onLog(libbpf_print_level level, const char *format, va_list args) {
     va_list copy;
@@ -34,6 +44,7 @@ int onLog(libbpf_print_level level, const char *format, va_list args) {
         case LIBBPF_WARN:
             LOG_WARNING("%s", zero::strings::trim(buffer.get()).c_str());
             break;
+
         case LIBBPF_INFO:
             LOG_INFO("%s", zero::strings::trim(buffer.get()).c_str());
             break;
@@ -52,46 +63,41 @@ int onEvent(void *ctx, void *data, size_t size) {
 void onEvent(void *ctx, int cpu, void *data, __u32 size) {
 #endif
     auto event = (go_probe_event *) data;
-    auto &[map, symbolTable, probe] = *(std::tuple<bpf_map *, go::symbol::SymbolTable &, SmithProbe &> *) ctx;
+    auto &[instances, channel] = *(std::pair<std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::Channel<SmithMessage, 100>>> *) ctx;
+
+    auto it = instances.find(event->pid);
+
+    if (it == instances.end())
+        return;
 
     Trace trace;
 
     for (int i = 0; i < event->count; i++)
         trace.args.emplace_back(event->args[i]);
 
-    for (int i = 0; i < TRACE_COUNT; i++) {
-        uintptr_t pc = event->stack_trace[i];
-
+    for (const auto &pc : event->stack_trace) {
         if (!pc)
             break;
 
-        auto it = symbolTable.find(pc);
+        auto symbolIterator = it->second.symbolTable.find(pc);
 
-        if (it == symbolTable.end())
+        if (symbolIterator == it->second.symbolTable.end())
             break;
 
-        char stack[4096] = {};
-        go::symbol::Symbol symbol = it.operator*().symbol();
+        char frame[4096] = {};
+        go::symbol::Symbol symbol = symbolIterator.operator*().symbol();
 
-        snprintf(stack, sizeof(stack),
-                 "%s %s:%d +0x%lx",
-                 symbol.name(),
-                 symbol.sourceFile(pc),
-                 symbol.sourceLine(pc),
-                 pc - symbol.entry()
+        snprintf(
+                frame,
+                sizeof(frame),
+                "%s %s:%d +0x%lx",
+                symbol.name(),
+                symbol.sourceFile(pc),
+                symbol.sourceLine(pc),
+                pc - symbol.entry()
         );
 
-        trace.stackTrace.emplace_back(stack);
-
-        if (!map || i == TRACE_COUNT - 1 || event->stack_trace[i + 1] || symbol.isStackTop())
-            continue;
-
-        int frame_size = symbol.frameSize(pc);
-
-        if (frame_size <= 0)
-            break;
-
-        bpf_map__update_elem(map, &pc, sizeof(pc), &frame_size, sizeof(frame_size), BPF_NOEXIST);
+        trace.stackTrace.emplace_back(frame);
     }
 
 #ifdef ENABLE_HTTP
@@ -108,7 +114,7 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
     }
 #endif
 
-    probe.write(trace);
+    channel->send({event->pid, it->second.version, TRACE, trace});
 
 #ifdef USE_RING_BUFFER
     return 0;
@@ -153,25 +159,32 @@ std::optional<int> getAPIOffset(const elf::Reader &reader, uint64_t address) {
     return offset;
 }
 
-int main(int argc, char **argv) {
-    INIT_CONSOLE_LOG(zero::INFO);
+std::shared_ptr<aio::sync::Channel<pid_t, 10>> inputChannel(const aio::Context &context) {
+    std::shared_ptr channel = std::make_shared<aio::sync::Channel<pid_t, 10>>(context);
+    std::shared_ptr buffer = std::make_shared<aio::ev::Buffer>(bufferevent_socket_new(context.base, STDIN_FILENO, 0));
 
-    zero::Cmdline cmdline;
+    zero::async::promise::loop<void>([=](const auto &loop) {
+        return buffer->readLine(EVBUFFER_EOL_ANY)->then([=](const std::string &line) {
+            std::optional<pid_t> pid = zero::strings::toNumber<pid_t>(line);
 
-    cmdline.add<int>("pid", "process id");
+            if (!pid) {
+                LOG_WARNING("invalid pid: %s", line.c_str());
+                P_CONTINUE(loop);
+                return;
+            }
 
-    cmdline.addOptional<int>("fp", '\0', "traceback with frame pointer", -1);
-    cmdline.addOptional<int>("abi", '\0', "specify golang calling conventions[stack(0)|register(1)]", -1);
-    cmdline.addOptional<int>("http", '\0', "enable http request tracking", -1);
+            channel->send(*pid);
+            P_CONTINUE(loop);
+        }, [=](const zero::async::promise::Reason &reason) {
+            LOG_ERROR("read stdin failed: %s", reason.message.c_str());
+            P_BREAK(loop);
+        });
+    });
 
-    cmdline.parse(argc, argv);
+    return channel;
+}
 
-    int pid = cmdline.get<int>("pid");
-
-    int fp = cmdline.getOptional<int>("fp");
-    int abi = cmdline.getOptional<int>("abi");
-    int http = cmdline.getOptional<int>("http");
-
+std::optional<Instance> attach(probe_bpf *skeleton, pid_t pid) {
     std::error_code ec;
 
     std::filesystem::path path = std::filesystem::path("/proc") / std::to_string(pid) / "exe";
@@ -179,64 +192,31 @@ int main(int argc, char **argv) {
 
     if (ec) {
         LOG_ERROR("read symbol link failed, %s", ec.message().c_str());
-        return -1;
+        return std::nullopt;
     }
 
     go::symbol::Reader reader;
 
     if (!reader.load(path)) {
         LOG_ERROR("load golang binary failed");
-        return -1;
+        return std::nullopt;
     }
 
-    libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
-    libbpf_set_print(onLog);
-
-    probe_bpf *skeleton = probe_bpf::open();
-
-    if (!skeleton) {
-        LOG_ERROR("failed to open BPF skeleton");
-        return -1;
-    }
+    bool abi = false;
+    bool fp = false;
+    bool http = false;
 
     std::optional<go::symbol::Version> version = reader.version();
 
     if (version) {
         LOG_INFO("golang version: %d.%d", version->major, version->minor);
 
-        if (abi < 0)
-            abi = *version >= REGISTER_BASED_VERSION;
-
-        if (fp < 0)
-            fp = *version >= FRAME_POINTER_VERSION;
-
-        if (http < 0)
-            http = *version >= TRACK_HTTP_VERSION;
+        abi = *version >= REGISTER_BASED_VERSION;
+        fp = *version >= FRAME_POINTER_VERSION;
+        http = *version >= TRACK_HTTP_VERSION;
     }
 
-    LOG_INFO("config: abi(%d) fp(%d) http(%d)", abi, fp, http);
-
-#ifdef BPF_NO_GLOBAL_DATA
-    if (probe_bpf::load(skeleton)) {
-        LOG_ERROR("failed to load and verify BPF skeleton");
-        probe_bpf::destroy(skeleton);
-        return -1;
-    }
-#endif
-
-    if (abi >= 0)
-        SET_CONFIG(skeleton, REGISTER_BASED, abi)
-
-    if (fp >= 0)
-        SET_CONFIG(skeleton, FRAME_POINTER, fp)
-
-#ifndef BPF_NO_GLOBAL_DATA
-    if (probe_bpf::load(skeleton)) {
-        LOG_ERROR("failed to load and verify BPF skeleton");
-        probe_bpf::destroy(skeleton);
-        return -1;
-    }
-#endif
+    LOG_INFO("process %d: abi(%d) fp(%d) http(%d)", pid, abi, fp, http);
 
     std::optional<zero::os::process::ProcessMapping> processMapping = zero::os::process::getImageBase(
             pid,
@@ -245,8 +225,7 @@ int main(int argc, char **argv) {
 
     if (!processMapping) {
         LOG_INFO("get image base failed");
-        probe_bpf::destroy(skeleton);
-        return -1;
+        return std::nullopt;
     }
 
     LOG_INFO("image base: %p", processMapping->start);
@@ -255,11 +234,19 @@ int main(int argc, char **argv) {
 
     if (!symbolTable) {
         LOG_INFO("get symbol table failed");
-        probe_bpf::destroy(skeleton);
-        return -1;
+        return std::nullopt;
     }
 
-    auto attach = [&](const auto &api) {
+    __u64 config = (abi ? REGISTER_BASED : 0) | (fp ? FRAME_POINTER : 0);
+
+    if (bpf_map__update_elem(skeleton->maps.config_map, &pid, sizeof(pid_t), &config, sizeof(__u64), BPF_ANY) < 0) {
+        LOG_ERROR("update config failed");
+        return std::nullopt;
+    }
+
+    std::list<std::unique_ptr<bpf_link, decltype(bpf_link__destroy) *>> links;
+
+    auto attachAPI = [&](const auto &api) {
         auto it = std::find_if(symbolTable->begin(), symbolTable->end(), [&](const auto &entry) {
             const char *name = entry.symbol().name();
 
@@ -274,9 +261,13 @@ int main(int argc, char **argv) {
             return;
         }
 
-        auto program = std::find_if(skeleton->skeleton->progs, skeleton->skeleton->progs + skeleton->skeleton->prog_cnt, [&](const auto &program) {
-            return strcmp(api.probe, program.name) == 0;
-        });
+        auto program = std::find_if(
+                skeleton->skeleton->progs,
+                skeleton->skeleton->progs + skeleton->skeleton->prog_cnt,
+                [&](const auto &program) {
+                    return strcmp(api.probe, program.name) == 0;
+                }
+        );
 
         if (program == skeleton->skeleton->progs + skeleton->skeleton->prog_cnt) {
             LOG_WARNING("probe %s not found", api.probe);
@@ -294,7 +285,7 @@ int main(int argc, char **argv) {
 
         LOG_INFO("attach function %s: %p+%d", api.name, entry, offset);
 
-        *program->link = bpf_program__attach_uprobe(
+        bpf_link *link = bpf_program__attach_uprobe(
                 *program->prog,
                 false,
                 pid,
@@ -302,16 +293,38 @@ int main(int argc, char **argv) {
                 entry + *offset - processMapping->start
         );
 
-        if (!*program->link) {
+        if (!link) {
             LOG_ERROR("failed to attach: %s", strerror(errno));
             return;
         }
+
+        links.push_back(std::unique_ptr<bpf_link, decltype(bpf_link__destroy) *>(link, bpf_link__destroy));
     };
 
-    std::for_each(GOLANG_API.begin(), GOLANG_API.end(), attach);
+    std::for_each(GOLANG_API.begin(), GOLANG_API.end(), attachAPI);
 
-    if (http > 0)
-        std::for_each(GOLANG_HTTP_API.begin(), GOLANG_HTTP_API.end(), attach);
+    if (http)
+        std::for_each(GOLANG_HTTP_API.begin(), GOLANG_HTTP_API.end(), attachAPI);
+
+    return Instance{
+            version ? zero::strings::format("%d.%d", version->major, version->minor) : "",
+            std::move(*symbolTable),
+            std::move(links)
+    };
+}
+
+int main() {
+    INIT_CONSOLE_LOG(zero::INFO);
+
+    libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
+    libbpf_set_print(onLog);
+
+    probe_bpf *skeleton = probe_bpf::open_and_load();
+
+    if (!skeleton) {
+        LOG_ERROR("failed to open BPF skeleton");
+        return -1;
+    }
 
     event_base *base = event_base_new();
 
@@ -321,13 +334,52 @@ int main(int argc, char **argv) {
     }
 
     aio::Context context = {base};
+    std::map<pid_t, Instance> instances;
 
-    SmithProbe probe(context);
+    zero::async::promise::loop<void>([skeleton, &instances, channel = inputChannel(context)](const auto &loop) {
+        channel->receive()->then([skeleton, &instances, loop](pid_t pid) {
+            if (instances.find(pid) != instances.end()) {
+                LOG_WARNING("ignore process %d", pid);
+                P_CONTINUE(loop);
+                return;
+            }
 
-    std::tuple<bpf_map *, go::symbol::SymbolTable &, SmithProbe &> ctx = {
-            fp != 1 ? skeleton->maps.frame_map : nullptr,
-            *symbolTable,
-            probe
+            std::optional<Instance> instance = attach(skeleton, pid);
+
+            if (!instance) {
+                P_CONTINUE(loop);
+                return;
+            }
+
+            instances.insert({pid, std::move(*instance)});
+            P_CONTINUE(loop);
+        }, [=](const zero::async::promise::Reason &reason) {
+            LOG_ERROR("receive failed: %s", reason.message.c_str());
+            P_BREAK(loop);
+        });
+    });
+
+    std::make_shared<aio::ev::Timer>(context)->setInterval(std::chrono::minutes{1}, [&]() {
+        auto it = instances.begin();
+
+        while (it != instances.end()) {
+            if (kill(it->first, 0) < 0 && errno == ESRCH) {
+                LOG_INFO("clean process %d", it->first);
+                it = instances.erase(it);
+                continue;
+            }
+
+            it++;
+        }
+
+        return true;
+    });
+
+    std::array<std::shared_ptr<aio::sync::Channel<SmithMessage, 100>>, 2> channels = startClient(context);
+
+    std::pair<std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::Channel<SmithMessage, 100>>> ctx = {
+            instances,
+            channels[1]
     };
 
 #ifdef USE_RING_BUFFER

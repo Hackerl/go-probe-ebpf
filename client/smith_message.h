@@ -17,13 +17,10 @@ enum Operate {
 };
 
 struct SmithMessage {
-    Operate operate;
-    nlohmann::json data;
-};
-
-struct SmithMessageEx : SmithMessage {
     pid_t pid;
     std::string version;
+    Operate operate;
+    nlohmann::json data;
 };
 
 struct Heartbeat {
@@ -67,7 +64,7 @@ struct FilterConfig {
     std::list<Filter> filters;
 };
 
-void to_json(nlohmann::json &j, const SmithMessageEx &message);
+void to_json(nlohmann::json &j, const SmithMessage &message);
 void from_json(const nlohmann::json &j, SmithMessage &message);
 
 void to_json(nlohmann::json &j, const Heartbeat &heartbeat);
