@@ -63,7 +63,7 @@ int onEvent(void *ctx, void *data, size_t size) {
 void onEvent(void *ctx, int cpu, void *data, __u32 size) {
 #endif
     auto event = (go_probe_event *) data;
-    auto &[instances, channel] = *(std::pair<std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::Channel<SmithMessage, 100>>> *) ctx;
+    auto &[instances, channel] = *(std::pair<std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::IChannel<SmithMessage>>> *) ctx;
 
     auto it = instances.find(event->pid);
 
@@ -114,7 +114,7 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
     }
 #endif
 
-    channel->send({event->pid, it->second.version, TRACE, trace});
+    channel->sendNoWait({event->pid, it->second.version, TRACE, trace});
 
 #ifdef USE_RING_BUFFER
     return 0;
@@ -159,24 +159,25 @@ std::optional<int> getAPIOffset(const elf::Reader &reader, uint64_t address) {
     return offset;
 }
 
-std::shared_ptr<aio::sync::Channel<pid_t, 10>> inputChannel(const aio::Context &context) {
+std::shared_ptr<aio::sync::IChannel<pid_t>> inputChannel(const aio::Context &context) {
     std::shared_ptr channel = std::make_shared<aio::sync::Channel<pid_t, 10>>(context);
     std::shared_ptr buffer = std::make_shared<aio::ev::Buffer>(bufferevent_socket_new(context.base, STDIN_FILENO, 0));
 
     zero::async::promise::loop<void>([=](const auto &loop) {
-        return buffer->readLine(EVBUFFER_EOL_ANY)->then([=](const std::string &line) {
+        buffer->readLine(EVBUFFER_EOL_ANY)->then([=](const std::string &line) {
             std::optional<pid_t> pid = zero::strings::toNumber<pid_t>(line);
 
             if (!pid) {
                 LOG_WARNING("invalid pid: %s", line.c_str());
-                P_CONTINUE(loop);
-                return;
+                return zero::async::promise::resolve<void>();
             }
 
-            channel->send(*pid);
+            return channel->send(*pid);
+        })->then([=]() {
             P_CONTINUE(loop);
         }, [=](const zero::async::promise::Reason &reason) {
             LOG_ERROR("read stdin failed: %s", reason.message.c_str());
+            channel->close();
             P_BREAK(loop);
         });
     });
@@ -376,9 +377,9 @@ int main() {
         return true;
     });
 
-    std::array<std::shared_ptr<aio::sync::Channel<SmithMessage, 100>>, 2> channels = startClient(context);
+    std::array<std::shared_ptr<aio::sync::IChannel<SmithMessage>>, 2> channels = startClient(context);
 
-    std::pair<std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::Channel<SmithMessage, 100>>> ctx = {
+    std::pair<std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::IChannel<SmithMessage>>> ctx = {
             instances,
             channels[1]
     };

@@ -8,7 +8,7 @@ constexpr auto SOCKET_PATH = "/var/run/smith_agent.sock";
 std::shared_ptr<zero::async::promise::Promise<void>>
 transfer(
         const aio::Context &context,
-        const std::array<std::shared_ptr<aio::sync::Channel<SmithMessage, 100>>, 2> &channels
+        const std::array<std::shared_ptr<aio::sync::IChannel<SmithMessage>>, 2> &channels
 ) {
     return aio::net::connect(context, SOCKET_PATH)->then([=](const std::shared_ptr<aio::ev::IBuffer> &buffer) {
         return zero::async::promise::all(
@@ -17,7 +17,7 @@ transfer(
                         return buffer->read(ntohl(*(uint32_t *) header.data()));
                     })->then([=](const std::vector<std::byte> &msg) {
                         try {
-                            channels[0]->send(nlohmann::json::parse(msg).get<SmithMessage>());
+                            channels[0]->sendNoWait(nlohmann::json::parse(msg).get<SmithMessage>());
                         } catch (const nlohmann::json::exception &e) {
                             LOG_ERROR("exception: %s", e.what());
                         }
@@ -54,8 +54,8 @@ transfer(
     });
 }
 
-std::array<std::shared_ptr<aio::sync::Channel<SmithMessage, 100>>, 2> startClient(const aio::Context &context) {
-    std::array<std::shared_ptr<aio::sync::Channel<SmithMessage, 100>>, 2> channels = {
+std::array<std::shared_ptr<aio::sync::IChannel<SmithMessage>>, 2> startClient(const aio::Context &context) {
+    std::array<std::shared_ptr<aio::sync::IChannel<SmithMessage>>, 2> channels = {
             std::make_shared<aio::sync::Channel<SmithMessage, 100>>(context),
             std::make_shared<aio::sync::Channel<SmithMessage, 100>>(context)
     };

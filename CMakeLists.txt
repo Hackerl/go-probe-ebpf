@@ -20,7 +20,7 @@ include(FetchContent)
 FetchContent_Declare(
         aio
         GIT_REPOSITORY https://github.com/Hackerl/aio
-        GIT_TAG 639b678c7143d19d769d411f6222a2d7b5538ff7
+        GIT_TAG 3b99ba1b54fa19adbe3699eafaccd5522d4a07a8
 )
 
 FetchContent_MakeAvailable(aio)
