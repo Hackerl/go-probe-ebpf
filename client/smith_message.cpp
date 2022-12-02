@@ -57,7 +57,7 @@ void from_json(const nlohmann::json &j, MatchRule &matchRule) {
 }
 
 void from_json(const nlohmann::json &j, Filter &filter) {
-    j.at("class_id").get_to(filter.classId);
+    j.at("class_id").get_to(filter.classID);
     j.at("method_id").get_to(filter.methodID);
     j.at("include").get_to(filter.include);
     j.at("exclude").get_to(filter.exclude);

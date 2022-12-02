@@ -2,6 +2,8 @@
 #define GO_PROBE_EBPF_SMITH_MESSAGE_H
 
 #include <list>
+#include <vector>
+#include <regex>
 #include <nlohmann/json.hpp>
 
 enum Operate {
@@ -40,8 +42,8 @@ struct Request {
 struct Trace {
     int classID;
     int methodID;
-    std::list<std::string> args;
-    std::list<std::string> stackTrace;
+    std::vector<std::string> args;
+    std::vector<std::string> stackTrace;
 #ifdef ENABLE_HTTP
     Request request;
 #endif
@@ -49,11 +51,11 @@ struct Trace {
 
 struct MatchRule {
     int index;
-    std::string regex;
+    std::regex regex;
 };
 
 struct Filter {
-    int classId;
+    int classID;
     int methodID;
     std::list<MatchRule> include;
     std::list<MatchRule> exclude;

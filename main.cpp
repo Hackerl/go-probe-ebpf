@@ -57,6 +57,31 @@ int onLog(libbpf_print_level level, const char *format, va_list args) {
     return length;
 }
 
+bool filter(const Trace &trace, const std::map<std::tuple<int, int>, Filter> &filters) {
+    auto it = filters.find({trace.classID, trace.methodID});
+
+    if (it == filters.end())
+        return true;
+
+    const auto &include = it->second.include;
+    const auto &exclude = it->second.exclude;
+
+    auto pred = [&](const MatchRule &rule) {
+        if (rule.index >= trace.args.size())
+            return false;
+
+        return std::regex_match(trace.args[rule.index], rule.regex);
+    };
+
+    if (!include.empty() && std::none_of(include.begin(), include.end(), pred))
+        return false;
+
+    if (!exclude.empty() && std::any_of(exclude.begin(), exclude.end(), pred))
+        return false;
+
+    return true;
+}
+
 #ifdef USE_RING_BUFFER
 int onEvent(void *ctx, void *data, size_t size) {
 #else
@@ -70,7 +95,10 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
     if (it == instances.end())
         return;
 
-    Trace trace;
+    Trace trace = {
+            event->class_id,
+            event->method_id
+    };
 
     for (int i = 0; i < event->count; i++)
         trace.args.emplace_back(event->args[i]);
@@ -100,18 +128,23 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
         trace.stackTrace.emplace_back(frame);
     }
 
+    if (!filter(trace, it->second.filters))
+        return;
+
 #ifdef ENABLE_HTTP
     trace.request.method = event->request.method;
     trace.request.uri = event->request.uri;
     trace.request.host = event->request.host;
     trace.request.remote = event->request.remote;
 
+#ifndef DISABLE_HTTP_HEADER
     for (const auto &header : event->request.headers) {
         if (!header[0][0])
             break;
 
         trace.request.headers.insert({header[0], header[1]});
     }
+#endif
 #endif
 
     channel->sendNoWait({event->pid, it->second.version, TRACE, trace});
@@ -338,7 +371,7 @@ int main() {
     std::map<pid_t, Instance> instances;
 
     zero::async::promise::loop<void>([skeleton, &instances, channel = inputChannel(context)](const auto &loop) {
-        channel->receive()->then([skeleton, &instances, loop](pid_t pid) {
+        channel->receive()->then([skeleton, loop, &instances](pid_t pid) {
             if (instances.find(pid) != instances.end()) {
                 LOG_WARNING("ignore process %d", pid);
                 P_CONTINUE(loop);
@@ -378,6 +411,44 @@ int main() {
     });
 
     std::array<std::shared_ptr<aio::sync::IChannel<SmithMessage>>, 2> channels = startClient(context);
+
+    zero::async::promise::loop<void>([channels, &instances](const auto &loop) {
+        channels[0]->receive()->then([loop, &instances](const SmithMessage &message) {
+            if (message.operate != FILTER) {
+                LOG_WARNING("unsupported protocol");
+                return;
+            }
+
+            auto it = instances.find(message.pid);
+
+            if (it == instances.end()) {
+                LOG_INFO("process not found: %d", message.pid);
+                return;
+            }
+
+            try {
+                auto config = message.data.get<FilterConfig>();
+
+                it->second.filters.clear();
+
+                std::transform(
+                        config.filters.begin(),
+                        config.filters.end(),
+                        std::inserter(it->second.filters, it->second.filters.end()),
+                        [](const auto &filter) {
+                            return std::pair{std::tuple{filter.classID, filter.methodID}, filter};
+                        }
+                );
+            } catch (const nlohmann::json::exception &e) {
+                LOG_ERROR("exception: %s", e.what());
+            }
+
+            P_CONTINUE(loop);
+        })->fail([=](const zero::async::promise::Reason &reason) {
+            LOG_ERROR("receive failed: %s", reason.message.c_str());
+            P_BREAK(loop);
+        });
+    });
 
     std::pair<std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::IChannel<SmithMessage>>> ctx = {
             instances,

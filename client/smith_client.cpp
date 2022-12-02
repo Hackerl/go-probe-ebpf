@@ -16,6 +16,8 @@ transfer(
                     buffer->read(4)->then([=](const std::vector<std::byte> &header) {
                         return buffer->read(ntohl(*(uint32_t *) header.data()));
                     })->then([=](const std::vector<std::byte> &msg) {
+                        LOG_INFO("message: %.*s", msg.size(), msg.data());
+
                         try {
                             channels[0]->sendNoWait(nlohmann::json::parse(msg).get<SmithMessage>());
                         } catch (const nlohmann::json::exception &e) {
