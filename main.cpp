@@ -82,12 +82,7 @@ bool filter(const Trace &trace, const std::map<std::tuple<int, int>, Filter> &fi
     return true;
 }
 
-#ifdef USE_RING_BUFFER
-int onEvent(void *ctx, void *data, size_t size) {
-#else
-void onEvent(void *ctx, int cpu, void *data, __u32 size) {
-#endif
-    auto event = (go_probe_event *) data;
+void onEvent(go_probe_event *event, void *ctx) {
     auto &[instances, channel] = *(std::pair<std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::IChannel<SmithMessage>>> *) ctx;
 
     auto it = instances.find(event->pid);
@@ -148,10 +143,6 @@ void onEvent(void *ctx, int cpu, void *data, __u32 size) {
 #endif
 
     channel->sendNoWait({event->pid, it->second.version, TRACE, trace});
-
-#ifdef USE_RING_BUFFER
-    return 0;
-#endif
 }
 
 std::optional<int> getAPIOffset(const elf::Reader &reader, uint64_t address) {
@@ -456,7 +447,15 @@ int main() {
     };
 
 #ifdef USE_RING_BUFFER
-    ring_buffer *rb = ring_buffer__new(bpf_map__fd(skeleton->maps.events), onEvent, &ctx, nullptr);
+    ring_buffer *rb = ring_buffer__new(
+            bpf_map__fd(skeleton->maps.events),
+            [](void *ctx, void *data, size_t size) {
+                onEvent((go_probe_event *) data, ctx);
+                return 0;
+            },
+            &ctx,
+            nullptr
+    );
 
     if (!rb) {
         LOG_ERROR("failed to create ring buffer: %s", strerror(errno));
@@ -470,7 +469,16 @@ int main() {
         return true;
     });
 #else
-    perf_buffer *pb = perf_buffer__new(bpf_map__fd(skeleton->maps.events), 64, onEvent, nullptr, &ctx, nullptr);
+    perf_buffer *pb = perf_buffer__new(
+            bpf_map__fd(skeleton->maps.events),
+            64,
+            [](void *ctx, int cpu, void *data, __u32 size) {
+                onEvent((go_probe_event *) data, ctx);
+            },
+            nullptr,
+            &ctx,
+            nullptr
+    );
 
     if (!pb) {
         LOG_ERROR("failed to create perf buffer: %s", strerror(errno));
