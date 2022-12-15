@@ -5,6 +5,7 @@
 #include <Zydis/Zydis.h>
 #include <zero/log.h>
 #include <zero/os/process.h>
+#include <zero/cache/lru.h>
 #include <aio/ev/timer.h>
 #include <aio/ev/buffer.h>
 #include <go/symbol/reader.h>
@@ -13,6 +14,7 @@
 
 constexpr auto MAX_OFFSET = 100;
 constexpr auto INSTRUCTION_BUFFER_SIZE = 128;
+constexpr auto FRAME_CACHE_SIZE = 128;
 
 constexpr auto REGISTER_BASED = 0x1;
 constexpr auto FRAME_POINTER = 0x2;
@@ -25,6 +27,7 @@ struct Instance {
     std::string version;
     go::symbol::SymbolTable symbolTable;
     std::list<std::unique_ptr<bpf_link, decltype(bpf_link__destroy) *>> links;
+    zero::cache::LRUCache<uintptr_t, std::string> cache;
     std::map<std::tuple<int, int>, Filter> filters;
 };
 
@@ -102,6 +105,13 @@ void onEvent(go_probe_event *event, void *ctx) {
         if (!pc)
             break;
 
+        std::optional<std::string> cache = it->second.cache.get(pc);
+
+        if (cache) {
+            trace.stackTrace.emplace_back(*cache);
+            continue;
+        }
+
         auto symbolIterator = it->second.symbolTable.find(pc);
 
         if (symbolIterator == it->second.symbolTable.end())
@@ -120,6 +130,7 @@ void onEvent(go_probe_event *event, void *ctx) {
                 pc - symbol.entry()
         );
 
+        it->second.cache.set(pc, frame);
         trace.stackTrace.emplace_back(frame);
     }
 
@@ -212,18 +223,22 @@ std::shared_ptr<aio::sync::IChannel<pid_t>> inputChannel(const aio::Context &con
 std::optional<Instance> attach(probe_bpf *skeleton, pid_t pid) {
     std::error_code ec;
 
-    std::filesystem::path path = std::filesystem::path("/proc") / std::to_string(pid) / "exe";
-    std::filesystem::path realPath = std::filesystem::read_symlink(path, ec);
+    std::filesystem::path realPath = std::filesystem::read_symlink(
+            std::filesystem::path("/proc") / std::to_string(pid) / "exe",
+            ec
+    );
 
     if (ec) {
         LOG_ERROR("read symbol link failed, %s", ec.message().c_str());
         return std::nullopt;
     }
 
+    std::filesystem::path path = std::filesystem::path("/proc") / std::to_string(pid) / "root" / realPath.relative_path();
+
     go::symbol::Reader reader;
 
     if (!reader.load(path)) {
-        LOG_ERROR("load golang binary failed");
+        LOG_ERROR("load golang binary failed: %s", path.string().c_str());
         return std::nullopt;
     }
 
@@ -245,7 +260,7 @@ std::optional<Instance> attach(probe_bpf *skeleton, pid_t pid) {
 
     std::optional<zero::os::process::ProcessMapping> processMapping = zero::os::process::getImageBase(
             pid,
-            std::filesystem::read_symlink(path).string()
+            realPath.string()
     );
 
     if (!processMapping) {
@@ -334,7 +349,8 @@ std::optional<Instance> attach(probe_bpf *skeleton, pid_t pid) {
     return Instance{
             version ? zero::strings::format("%d.%d", version->major, version->minor) : "",
             std::move(*symbolTable),
-            std::move(links)
+            std::move(links),
+            zero::cache::LRUCache<uintptr_t, std::string>(FRAME_CACHE_SIZE)
     };
 }
 
@@ -350,6 +366,8 @@ int main() {
         LOG_ERROR("failed to open BPF skeleton");
         return -1;
     }
+
+    signal(SIGPIPE, SIG_IGN);
 
     event_base *base = event_base_new();
 
