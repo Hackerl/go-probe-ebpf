@@ -1,6 +1,7 @@
 #include "api/api.h"
 #include "client/smith_client.h"
 #include "ebpf/src/event.h"
+#include "ebpf/src/config.h"
 #include "ebpf/probe.skel.h"
 #include <Zydis/Zydis.h>
 #include <zero/log.h>
@@ -15,9 +16,7 @@
 constexpr auto MAX_OFFSET = 100;
 constexpr auto INSTRUCTION_BUFFER_SIZE = 128;
 constexpr auto FRAME_CACHE_SIZE = 128;
-
-constexpr auto REGISTER_BASED = 0x1;
-constexpr auto FRAME_POINTER = 0x2;
+constexpr auto DEFAULT_QUOTAS = 12000;
 
 constexpr auto TRACK_HTTP_VERSION = go::symbol::Version{1, 12};
 constexpr auto REGISTER_BASED_VERSION = go::symbol::Version{1, 17};
@@ -28,7 +27,10 @@ struct Instance {
     go::symbol::SymbolTable symbolTable;
     std::list<std::unique_ptr<bpf_link, decltype(bpf_link__destroy) *>> links;
     zero::cache::LRUCache<uintptr_t, std::string> cache;
+    probe_config config;
     std::map<std::tuple<int, int>, Filter> filters;
+    std::map<std::tuple<int, int>, int> limits;
+    int quotas[CLASS_MAX][METHOD_MAX];
 };
 
 int onLog(libbpf_print_level level, const char *format, va_list args) {
@@ -85,13 +87,29 @@ bool filter(const Trace &trace, const std::map<std::tuple<int, int>, Filter> &fi
     return true;
 }
 
-void onEvent(go_probe_event *event, void *ctx) {
-    auto &[instances, channel] = *(std::pair<std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::IChannel<SmithMessage>>> *) ctx;
+void onEvent(probe_event *event, void *ctx) {
+    auto &[skeleton, instances, channel] = *(std::tuple<probe_bpf *, std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::IChannel<SmithMessage>>> *) ctx;
 
     auto it = instances.find(event->pid);
 
     if (it == instances.end())
         return;
+
+    auto &quota = it->second.quotas[event->class_id][event->method_id];
+
+    if (quota <= 0)
+        return;
+
+    if (!--quota) {
+        LOG_INFO("disable probe: %d %d %d", it->first, event->class_id, event->method_id);
+
+        it->second.config.stop[event->class_id][event->method_id] = true;
+
+        if (bpf_map__update_elem(skeleton->maps.config_map, &it->first, sizeof(pid_t), &it->second.config, sizeof(probe_config), BPF_ANY) < 0) {
+            LOG_ERROR("update process %d config failed", it->first);
+            return;
+        }
+    }
 
     Trace trace = {
             event->class_id,
@@ -153,7 +171,7 @@ void onEvent(go_probe_event *event, void *ctx) {
 #endif
 #endif
 
-    channel->sendNoWait({event->pid, it->second.version, TRACE, trace});
+    channel->sendNoWait({it->first, it->second.version, TRACE, trace});
 }
 
 std::optional<int> getAPIOffset(const elf::Reader &reader, uint64_t address) {
@@ -277,10 +295,13 @@ std::optional<Instance> attach(probe_bpf *skeleton, pid_t pid) {
         return std::nullopt;
     }
 
-    __u64 config = (abi ? REGISTER_BASED : 0) | (fp ? FRAME_POINTER : 0);
+    probe_config config = {
+            abi,
+            fp
+    };
 
-    if (bpf_map__update_elem(skeleton->maps.config_map, &pid, sizeof(pid_t), &config, sizeof(__u64), BPF_ANY) < 0) {
-        LOG_ERROR("update config failed");
+    if (bpf_map__update_elem(skeleton->maps.config_map, &pid, sizeof(pid_t), &config, sizeof(probe_config), BPF_ANY) < 0) {
+        LOG_ERROR("update process %d config failed", pid);
         return std::nullopt;
     }
 
@@ -350,7 +371,8 @@ std::optional<Instance> attach(probe_bpf *skeleton, pid_t pid) {
             version ? zero::strings::format("%d.%d", version->major, version->minor) : "",
             std::move(*symbolTable),
             std::move(links),
-            zero::cache::LRUCache<uintptr_t, std::string>(FRAME_CACHE_SIZE)
+            zero::cache::LRUCache<uintptr_t, std::string>(FRAME_CACHE_SIZE),
+            config
     };
 }
 
@@ -394,7 +416,9 @@ int main() {
                 return;
             }
 
+            std::fill_n(instance->quotas[0], sizeof(instance->quotas) / sizeof(**instance->quotas), DEFAULT_QUOTAS);
             instances.insert({pid, std::move(*instance)});
+
             P_CONTINUE(loop);
         }, [=](const zero::async::promise::Reason &reason) {
             LOG_ERROR("receive failed: %s", reason.message.c_str());
@@ -412,6 +436,9 @@ int main() {
                 it = instances.erase(it);
                 continue;
             }
+
+            std::fill_n(it->second.config.stop[0], sizeof(it->second.config.stop) / sizeof(**it->second.config.stop), false);
+            bpf_map__update_elem(skeleton->maps.config_map, &it->first, sizeof(pid_t), &it->second.config, sizeof(probe_config), BPF_ANY);
 
             it++;
         }
@@ -459,7 +486,8 @@ int main() {
         });
     });
 
-    std::pair<std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::IChannel<SmithMessage>>> ctx = {
+    std::tuple<probe_bpf *, std::map<pid_t, Instance> &, std::shared_ptr<aio::sync::IChannel<SmithMessage>>> ctx = {
+            skeleton,
             instances,
             channels[1]
     };
@@ -468,7 +496,7 @@ int main() {
     ring_buffer *rb = ring_buffer__new(
             bpf_map__fd(skeleton->maps.events),
             [](void *ctx, void *data, size_t size) {
-                onEvent((go_probe_event *) data, ctx);
+                onEvent((probe_event *) data, ctx);
                 return 0;
             },
             &ctx,
@@ -491,7 +519,7 @@ int main() {
             bpf_map__fd(skeleton->maps.events),
             64,
             [](void *ctx, int cpu, void *data, __u32 size) {
-                onEvent((go_probe_event *) data, ctx);
+                onEvent((probe_event *) data, ctx);
             },
             nullptr,
             &ctx,
