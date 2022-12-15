@@ -437,6 +437,19 @@ int main() {
                 continue;
             }
 
+            for (int i = 0; i < CLASS_MAX; i++) {
+                for (int j = 0; j < METHOD_MAX; j++) {
+                    auto limitIterator = it->second.limits.find({i, j});
+
+                    if (limitIterator == it->second.limits.end()) {
+                        it->second.quotas[i][j] = DEFAULT_QUOTAS;
+                        continue;
+                    }
+
+                    it->second.quotas[i][j] = limitIterator->second;
+                }
+            }
+
             std::fill_n(it->second.config.stop[0], sizeof(it->second.config.stop) / sizeof(**it->second.config.stop), false);
             bpf_map__update_elem(skeleton->maps.config_map, &it->first, sizeof(pid_t), &it->second.config, sizeof(probe_config), BPF_ANY);
 
@@ -450,11 +463,6 @@ int main() {
 
     zero::async::promise::loop<void>([channels, &instances](const auto &loop) {
         channels[0]->receive()->then([loop, &instances](const SmithMessage &message) {
-            if (message.operate != FILTER) {
-                LOG_WARNING("unsupported protocol");
-                return;
-            }
-
             auto it = instances.find(message.pid);
 
             if (it == instances.end()) {
@@ -462,21 +470,51 @@ int main() {
                 return;
             }
 
-            try {
-                auto config = message.data.get<FilterConfig>();
+            switch (message.operate) {
+                case FILTER: {
+                    try {
+                        auto config = message.data.get<FilterConfig>();
 
-                it->second.filters.clear();
+                        it->second.filters.clear();
 
-                std::transform(
-                        config.filters.begin(),
-                        config.filters.end(),
-                        std::inserter(it->second.filters, it->second.filters.end()),
-                        [](const auto &filter) {
-                            return std::pair{std::tuple{filter.classID, filter.methodID}, filter};
-                        }
-                );
-            } catch (const nlohmann::json::exception &e) {
-                LOG_ERROR("exception: %s", e.what());
+                        std::transform(
+                                config.filters.begin(),
+                                config.filters.end(),
+                                std::inserter(it->second.filters, it->second.filters.end()),
+                                [](const auto &filter) {
+                                    return std::pair{std::tuple{filter.classID, filter.methodID}, filter};
+                                }
+                        );
+                    } catch (const nlohmann::json::exception &e) {
+                        LOG_ERROR("exception: %s", e.what());
+                    }
+
+                    break;
+                }
+
+                case LIMIT: {
+                    try {
+                        auto config = message.data.get<LimitConfig>();
+
+                        it->second.limits.clear();
+
+                        std::transform(
+                                config.limits.begin(),
+                                config.limits.end(),
+                                std::inserter(it->second.limits, it->second.limits.end()),
+                                [](const auto &limit) {
+                                    return std::pair{std::tuple{limit.classID, limit.methodID}, limit.quota};
+                                }
+                        );
+                    } catch (const nlohmann::json::exception &e) {
+                        LOG_ERROR("exception: %s", e.what());
+                    }
+
+                    break;
+                }
+
+                default:
+                    break;
             }
 
             P_CONTINUE(loop);
