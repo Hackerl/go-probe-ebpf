@@ -548,10 +548,14 @@ int main() {
         return -1;
     }
 
-    std::make_shared<aio::ev::Event>(context, ring_buffer__epoll_fd(rb))->onPersist(EV_READ, [=](short what) {
-        ring_buffer__poll(rb, 0);
-        return true;
-    });
+    std::make_shared<aio::ev::Event>(context, bpf_map__fd(skeleton->maps.events))->onPersist(
+            EV_READ,
+            [=](short what) {
+                ring_buffer__consume(rb);
+                return true;
+            },
+            std::chrono::seconds{1}
+    );
 #else
     perf_buffer *pb = perf_buffer__new(
             bpf_map__fd(skeleton->maps.events),
@@ -572,10 +576,14 @@ int main() {
     }
 
     for (size_t i = 0; i < perf_buffer__buffer_cnt(pb); i++) {
-        std::make_shared<aio::ev::Event>(context, perf_buffer__buffer_fd(pb, i))->onPersist(EV_READ, [=](short what) {
-            perf_buffer__consume_buffer(pb, i);
-            return true;
-        });
+        std::make_shared<aio::ev::Event>(context, perf_buffer__buffer_fd(pb, i))->onPersist(
+                EV_READ,
+                [=](short what) {
+                    perf_buffer__consume_buffer(pb, i);
+                    return true;
+                },
+                std::chrono::seconds{1}
+        );
     }
 #endif
 
